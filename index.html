@@ -3,31 +3,28 @@
 <head>
   <meta charset='utf-8'>
   <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>Gallery v0.2 (Safe)</title>
+  <title>Gallery v0.2.4</title>
   <link rel='stylesheet' href='/static/styles.css'>
 </head>
 <body>
   <header>
-    <h1>Gallery v0.2 — Safe</h1>
+    <h1>Gallery v0.2.4 — States & Seasons</h1>
     <div class='controls'>
-      <input id='q' placeholder='Search title/keywords/location...'>
-      <select id='orient'>
-        <option value=''>Any orientation</option>
-        <option value='landscape'>Landscape</option>
-        <option value='portrait'>Portrait</option>
-        <option value='square'>Square</option>
-      </select>
+      <div class='chip-row' id='seasonRow'></div>
+      <div class='chip-row' id='stateRow'></div>
+      <label class='switch'><input type='checkbox' id='wantAvif'><span>Prefer AVIF</span></label>
       <button id='refresh'>Refresh</button>
     </div>
   </header>
-  <main>
-    <div id='grid' class='grid'></div>
-    <aside id='side' class='side hidden'>
-      <button id='close'>×</button>
-      <h2 id='meta-name'></h2>
-      <pre id='meta'></pre>
-    </aside>
-  </main>
+  <main><div id='masonry' class='masonry'></div></main>
+
+  <div id='fs' class='fs hidden' aria-hidden='true'>
+    <button id='fsClose' class='fs-close' aria-label='Close'>×</button>
+    <button id='fsPrev' class='fs-arrow left' aria-label='Previous'>❮</button>
+    <img id='fsImg' alt='Full view' />
+    <button id='fsNext' class='fs-arrow right' aria-label='Next'>❯</button>
+  </div>
+
   <script src='/static/script.js'></script>
 </body>
 </html>

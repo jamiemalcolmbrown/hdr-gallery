@@ -1,1 +1,0 @@
-const CONFIG={mode:'live'};

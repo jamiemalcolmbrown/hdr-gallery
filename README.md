@@ -1,16 +1,27 @@
-# Gallery v0.2 — Safe/Full
+# Gallery v0.2.4
 
-## Quick start
-1) Create venv & install deps
+**New in v0.2.4:**
+- **Masonry layout (no cropping):** variable-height thumbs; clean scaffold.
+- **Captions:** Only **Title** and **State (full)**, if present — otherwise no caption.
+- **States fully spelled out** (e.g., “MA” → “Massachusetts”). Facets and filters use full names.
+- **Prebuild:** `--prebuild` to warm 256/512/1024 thumbs and 4K display; add `--prebuild-avif` to include AVIF.
+
+## Install
 ```
-python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+# Optional AVIF:
+pip install pillow-avif-plugin
 ```
-2) Ensure ExifTool is installed & on PATH.
-3) Run
+
+## Prebuild (recommended)
 ```
-python server.py --host 0.0.0.0 --port 8080           # shares on your LAN
-# or just:
-python server.py                                      # localhost only (127.0.0.1:8080)
+python server.py --images /path/to/images --prebuild
+# Or:
+python server.py --images /path/to/images --prebuild --prebuild-avif
 ```
-4) Visit http://localhost:8080/
+
+## Run
+```
+python server.py --images /path/to/images --host 0.0.0.0 --port 8080
+```
