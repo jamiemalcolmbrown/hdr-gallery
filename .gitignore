@@ -1,0 +1,17 @@
+# Ignore image and cache folders
+images/*
+cache/*
+
+# Ignore environment/config files
+.env
+*.env
+config.local.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
