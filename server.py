@@ -1,335 +1,208 @@
-from __future__ import annotations
-from flask import Flask, send_from_directory, jsonify, abort
+#!/usr/bin/env python3
+"""
+Gallery v0.2 server (safe/full)
+- Uses ExifTool with -api jsonUnicode=1 to escape control characters
+- Skips corrupt metadata instead of crashing
+- Defaults to current directory if --images not given
+- Serves a minimal UI at "/"
+"""
+import argparse, json, mimetypes, os, re, subprocess, sys, threading, time
+from dataclasses import dataclass
 from pathlib import Path
-import json, subprocess
-from typing import Dict, Any
+from typing import Dict, List, Optional
+from flask import Flask, jsonify, request, send_file, abort, send_from_directory
 
-ROOT = Path(__file__).resolve().parent
-IMAGES_DIR = ROOT / "images"
-VIEWER_DIR = ROOT / "viewer"
-CACHE_DIR = ROOT / "cache"
-CACHE_DIR.mkdir(exist_ok=True)
+DEFAULT_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".heic", ".heif", ".webp"}
+CACHE_TTL_DEFAULT = int(os.environ.get("GALLERY_CACHE_TTL", "300"))
 
-SUPPORTED = {".avif", ".webp", ".jxl", ".jpg", ".jpeg", ".png"}
-MAX_W, MAX_H = 3840, 2160
+app = Flask(__name__)
 
-MEM_CACHE: Dict[str, Dict[str, Any]] = {}
-
-try:
-    from PIL import Image, ImageOps
+def safe_float(x, default=None):
     try:
-        import pillow_avif  # noqa: F401
-        AVIF_WRITABLE = True
+        return float(x)
     except Exception:
-        AVIF_WRITABLE = False
-except Exception:
-    Image = None
-    ImageOps = None
-    AVIF_WRITABLE = False
+        return default
 
-UNTOUCHED_EXTS = {".jxl"}
-
-EXIFTOOL_FIELDS = [
-    "Title", "Description",
-    "Province-State", "Location", "Sublocation", "City",
-    "Subject", "HierarchicalSubject", "XPKeywords",
-    "XMP:Label",
-    "Make", "Model",
-    "LensModel", "Lens",
-    "FNumber", "ApertureValue",
-    "ExposureTime", "ShutterSpeed", "ShutterSpeedValue",
-    "ISO", "ISOSetting",
-    "FocalLength",
-    "CreateDate", "DateTimeOriginal"
-]
-
-def run_exiftool_batch(files: list[Path]) -> Dict[str, Dict[str, Any]]:
-    if not files:
-        return {}
-    cmd = ["exiftool", "-json"] + [f"-{f}" for f in EXIFTOOL_FIELDS] + [str(p) for p in files]
+def get_exif_metadata(file_path: str) -> dict:
+    cmd = ["exiftool","-j","-api","jsonUnicode=1","-m","-fast2","-n",file_path]
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-        data = json.loads(out.decode("utf-8", errors="replace"))
-    except Exception as e:
-        print("Exiftool error:", e)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        if proc.returncode != 0:
+            app.logger.warning("[exiftool] rc=%s file=%s stderr=%s", proc.returncode, file_path, proc.stderr.strip())
+            return {}
+        data = json.loads(proc.stdout)
+        if isinstance(data, list) and data:
+            return data[0]
+        return {}
+    except (json.JSONDecodeError, subprocess.TimeoutExpired, OSError) as e:
+        app.logger.warning("[exiftool] parse error for %s: %s", file_path, e)
         return {}
 
-    result: Dict[str, Dict[str, Any]] = {}
-    for item in data:
-        src = item.get("SourceFile")
-        if not src:
-            continue
-        fn = Path(src).name
+@dataclass
+class MetaCacheItem:
+    mtime: float
+    data: dict
+    ts: float
 
-        title = item.get("Title") or ""
-        desc = item.get("Description") or ""
-        state = item.get("Province-State") or ""
-        loc = item.get("Sublocation") or item.get("Location") or item.get("City") or ""
-
-        tags = []
-        for key in ("Subject", "HierarchicalSubject", "XPKeywords"):
-            val = item.get(key)
-            if isinstance(val, list):
-                tags += [str(v) for v in val if v]
-            elif isinstance(val, str) and val.strip():
-                tags += [t.strip() for t in val.replace(";", ",").split(",") if t.strip()]
-        seen, uniq = set(), []
-        for t in tags:
-            tt = t.strip()
-            if tt and tt.lower() not in seen:
-                seen.add(tt.lower()); uniq.append(tt)
-
-        lr_label = (item.get("XMP:Label") or "").strip()
-
-        make  = (item.get("Make") or "").strip()
-        model = (item.get("Model") or "").strip()
-        camera = " ".join([p for p in [make, model] if p]).strip()
-
-        lens = (item.get("LensModel") or item.get("Lens") or "").strip()
-
-        ap = item.get("FNumber") or item.get("ApertureValue")
+class MetaCache:
+    def __init__(self, ttl: int = CACHE_TTL_DEFAULT):
+        self.ttl = max(0, int(ttl))
+        self._lock = threading.Lock()
+        self._data: Dict[str, MetaCacheItem] = {}
+    def get(self, path: str) -> Optional[dict]:
+        p = str(Path(path).resolve())
+        with self._lock:
+            item = self._data.get(p)
+            if not item: return None
+            try:
+                mtime = os.path.getmtime(p)
+            except FileNotFoundError:
+                self._data.pop(p, None); return None
+            if mtime != item.mtime: self._data.pop(p, None); return None
+            if self.ttl and (time.time() - item.ts > self.ttl):
+                self._data.pop(p, None); return None
+            return item.data
+    def set(self, path: str, data: dict):
+        p = str(Path(path).resolve())
         try:
-            ap_str = f"f/{float(ap):.1f}" if ap else ""
-        except Exception:
-            ap_str = f"f/{ap}" if ap else ""
+            mtime = os.path.getmtime(p)
+        except FileNotFoundError:
+            return
+        with self._lock:
+            self._data[p] = MetaCacheItem(mtime=mtime, data=data, ts=time.time())
 
-        sh = item.get("ExposureTime") or item.get("ShutterSpeed") or item.get("ShutterSpeedValue") or ""
-        sh_str = str(sh)
+meta_cache = MetaCache()
 
-        iso = item.get("ISO") or item.get("ISOSetting") or ""
-        iso_str = f"ISO {iso}" if iso else ""
+def is_image(path: Path) -> bool:
+    return path.suffix.lower() in DEFAULT_EXTS
 
-        fl = (item.get("FocalLength") or "").replace(" ", "")
-        fl_str = fl if fl else ""
+def scan_images(root: Path) -> List[Path]:
+    files: List[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            p = Path(dirpath) / fn
+            if is_image(p): files.append(p)
+    files.sort(key=lambda p: str(p).lower())
+    return files
 
-        date = item.get("DateTimeOriginal") or item.get("CreateDate") or ""
+KEYS_STRING = ["FileName","Directory","MIMEType","Model","Make","LensModel","Artist","Creator","Title","Headline","Description","Subject","Keywords","Location","City","State","Province-State","Country"]
+KEYS_NUM = ["ImageWidth","ImageHeight","Orientation","FocalLength","FNumber","ShutterSpeedValue","ExposureTime","ISO","GPSLatitude","GPSLongitude"]
+KEYS_TIME = ["CreateDate","DateTimeOriginal"]
 
-        result[fn] = {
-            "caption": title,
-            "description": desc,
-            "state": state,
-            "location": loc,
-            "tags": uniq,
-            "color": "",
-            "lr_color_label": lr_label,
-            "camera": camera,
-            "lens": lens,
-            "aperture": ap_str,
-            "shutter": sh_str,
-            "iso": iso_str,
-            "focal_length": fl_str,
-            "date": date
-        }
-    return result
+def summarize_meta(meta: dict) -> dict:
+    if not meta: return {}
+    out = {}
+    for k in KEYS_STRING:
+        v = meta.get(k)
+        if v is None: continue
+        if isinstance(v, str):
+            v = re.sub(r"[\r\x00-\x08\x0b\x0c\x0e-\x1f]", " ", v).strip()
+        out[k] = v
+    for k in KEYS_NUM:
+        v = meta.get(k)
+        if v is None: continue
+        out[k] = safe_float(v, v)
+    for k in KEYS_TIME:
+        v = meta.get(k)
+        if v: out[k] = v
+    w = out.get("ImageWidth"); h = out.get("ImageHeight")
+    if isinstance(w,(int,float)) and isinstance(h,(int,float)) and w and h:
+        out["_orientation"] = "portrait" if h > w else ("landscape" if w > h else "square")
+    return out
 
-def compute_dominant_color_label(img_path: Path) -> str:
-    if Image is None:
-        return ""
-    try:
-        with Image.open(img_path) as im0:
-            im = ImageOps.exif_transpose(im0.convert("RGB"))
-            im.thumbnail((256, 256))
-            px = im.load()
-            w, h = im.size
-            hue_bins = [0]*360
-            gray = black = white = 0
-            for y in range(h):
-                for x in range(w):
-                    r, g, b = px[x, y]
-                    rn, gn, bn = r/255.0, g/255.0, b/255.0
-                    mx, mn = max(rn, gn, bn), min(rn, gn, bn)
-                    v = mx
-                    d = mx - mn
-                    s = 0 if mx == 0 else d/mx
-                    if v < 0.12:
-                        black += 1; continue
-                    if s < 0.08 and v > 0.9:
-                        white += 1; continue
-                    if s < 0.08:
-                        gray += 1; continue
-                    if d == 0:
-                        continue
-                    if mx == rn:   h = ((gn - bn) / d) % 6
-                    elif mx == gn: h = ((bn - rn) / d) + 2
-                    else:          h = ((rn - gn) / d) + 4
-                    hue = int(60*h) % 360
-                    hue_bins[hue] += 1
+IMAGES_DIR = Path(os.environ.get("GALLERY_IMAGES_DIR", ".")).resolve()
+def set_images_dir(p: Path):
+    global IMAGES_DIR
+    IMAGES_DIR = p.resolve()
+    app.logger.info("Using IMAGES_DIR=%s", IMAGES_DIR)
 
-            total = sum(hue_bins) + gray + black + white
-            if total == 0: return ""
-
-            if black/total > 0.35: return "black"
-            if white/total > 0.35: return "white"
-            if gray/total  > 0.35: return "gray"
-
-            h = max(range(360), key=lambda i: hue_bins[i])
-            if h >= 345 or h < 15: return "red"
-            if h < 25: return "red-orange"
-            if h < 45: return "orange" if (h < 35) else "yellow-orange"
-            if h < 65: return "yellow"
-            if h < 170: return "green"
-            if h < 200: return "cyan"
-            if h < 255: return "blue"
-            if h < 290: return "purple"
-            if h < 320: return "magenta"
-            if h < 345: return "pink"
-            return "red"
-    except Exception as e:
-        print("Color compute error:", img_path.name, e)
-        return ""
-
-def _scaled_name(src: Path) -> Path:
-    ext = src.suffix.lower()
-    if ext in {".jpg", ".jpeg", ".png", ".webp"}:
-        return CACHE_DIR / src.name
-    if ext == ".avif":
-        try:
-            import pillow_avif  # noqa: F401
-            return CACHE_DIR / src.name
-        except Exception:
-            return CACHE_DIR / (src.stem + ".webp")
-    return src
-
-def _needs_scale(w: int, h: int) -> bool:
-    return (w > MAX_W) or (h > MAX_H)
-
-def _scale_image(src: Path, dst: Path) -> None:
-    if Image is None:
-        return
-    with Image.open(src) as im0:
-        im = ImageOps.exif_transpose(im0.convert("RGB"))
-        w, h = im.size
-        sf = min(MAX_W / w, MAX_H / h, 1.0)
-        if sf < 1.0:
-            im = im.resize((int(w*sf), int(h*sf)), Image.LANCZOS)
-
-        ext = dst.suffix.lower()
-        if ext in {".jpg", ".jpeg"}:
-            im.save(dst, quality=90, optimize=True, subsampling=1)
-        elif ext == ".png":
-            im.save(dst, optimize=True)
-        elif ext == ".webp":
-            im.save(dst, quality=90, method=6)
-        elif ext == ".avif":
-            im.save(dst, quality=90)
-        else:
-            im.save(dst.with_suffix(".jpg"), quality=90, optimize=True, subsampling=1)
-
-def get_serving_path(src: Path) -> Path:
-    ext = src.suffix.lower()
-    if ext in {".jxl"} or Image is None:
-        return src
-    try:
-        with Image.open(src) as im:
-            w, h = im.size
-    except Exception:
-        return src
-    if not _needs_scale(w, h):
-        return src
-    dst = _scaled_name(src)
-    if dst == src:
-        return src
-    try:
-        if (not dst.exists()) or (dst.stat().st_mtime < src.stat().st_mtime):
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            _scale_image(src, dst)
-    except Exception as e:
-        print("Scale error:", src.name, e)
-        return src
-    return dst
-
-def scan_images() -> list[Path]:
-    if not IMAGES_DIR.exists():
-        return []
-    return sorted([p for p in IMAGES_DIR.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED],
-                  key=lambda p: p.name.lower())
-
-def hydrate_cache(files: list[Path]) -> None:
-    needs: list[Path] = []
-    for p in files:
-        mtime = p.stat().st_mtime
-        rec = MEM_CACHE.get(p.name)
-        if not rec or rec.get("mtime") != mtime:
-            needs.append(p)
-
-    if needs:
-        meta_map = run_exiftool_batch(needs)
-        for p in needs:
-            base = meta_map.get(p.name, {
-                "caption": "", "description": "", "state": "", "location": "",
-                "tags": [], "color": "", "lr_color_label": "",
-                "camera": "", "lens": "", "aperture": "", "shutter": "",
-                "iso": "", "focal_length": "", "date": ""
-            })
-            if not base.get("color"):
-                base["color"] = compute_dominant_color_label(p) or ""
-            MEM_CACHE[p.name] = {"mtime": p.stat().st_mtime, "meta": base}
-
-app = Flask(__name__, static_folder=None)
-
+# ---------- Static & index ----------
 @app.get("/")
-def root():
-    return send_from_directory(VIEWER_DIR, "index.html")
+def index():
+    return send_from_directory(str(Path(__file__).parent), "index.html")
 
-@app.get("/viewer/")
-def viewer_root():
-    return send_from_directory(VIEWER_DIR, "index.html")
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory(str(Path(__file__).parent / "static"), filename)
 
-@app.get("/viewer/<path:path>")
-def viewer_static(path):
-    full = (VIEWER_DIR / path).resolve()
-    if not str(full).startswith(str(VIEWER_DIR.resolve())):
-        return abort(404)
-    return send_from_directory(VIEWER_DIR, path)
+# ---------- APIs ----------
+@app.get("/api/ping")
+def ping():
+    return jsonify({"ok": True, "images_dir": str(IMAGES_DIR)})
 
-@app.get("/images/<path:path>")
-def images_static(path):
-    src = (IMAGES_DIR / path).resolve()
-    if not str(src).startswith(str(IMAGES_DIR.resolve())):
-        return abort(404)
-    if not src.exists() or not src.is_file():
-        return abort(404)
-    serve_path = get_serving_path(src)
-    def is_rel_to(p: Path, base: Path) -> bool:
-        try: return p.is_relative_to(base)
-        except AttributeError: return str(p.resolve()).startswith(str(base.resolve()))
-    if is_rel_to(serve_path, IMAGES_DIR):
-        return send_from_directory(IMAGES_DIR, path)
-    if is_rel_to(serve_path, CACHE_DIR):
-        rel = serve_path.relative_to(CACHE_DIR)
-        return send_from_directory(CACHE_DIR, str(rel))
-    return send_from_directory(IMAGES_DIR, path)
+@app.get("/api/images")
+def api_images():
+    q = (request.args.get("q") or "").strip().lower()
+    orient = (request.args.get("orient") or "").strip().lower()
+    limit = int(request.args.get("limit", 1000))
+    offset = int(request.args.get("offset", 0))
+
+    files = scan_images(IMAGES_DIR)
+    results = []
+    for p in files:
+        p_str = str(p)
+        meta = meta_cache.get(p_str)
+        if meta is None:
+            meta = get_exif_metadata(p_str)
+            meta_cache.set(p_str, meta)
+        summary = summarize_meta(meta)
+        summary["_path"] = str(p.relative_to(IMAGES_DIR))
+        summary["_name"] = p.name
+
+        if q:
+            hay = " ".join(str(summary.get(k, "")) for k in ("_name","Title","Description","Keywords","City","State","Country","Location")).lower()
+            if q not in hay: continue
+        if orient and summary.get("_orientation") != orient: continue
+        results.append(summary)
+
+    total = len(results)
+    results = results[offset:offset + limit]
+    return jsonify({"total": total, "items": results})
 
 @app.get("/api/metadata")
-def api_metadata():
-    files = scan_images()
-    hydrate_cache(files)
+def api_metadata_for_path():
+    rel = request.args.get("path")
+    if not rel: abort(400, "Missing 'path'")
+    candidate = (IMAGES_DIR / rel).resolve()
+    try: candidate.relative_to(IMAGES_DIR)
+    except Exception: abort(400, "Invalid path")
+    if not candidate.exists(): abort(404)
+    meta = meta_cache.get(str(candidate))
+    if meta is None:
+        meta = get_exif_metadata(str(candidate))
+        meta_cache.set(str(candidate), meta)
+    return jsonify(meta or {})
 
-    images_meta = {p.name: MEM_CACHE.get(p.name, {}).get("meta", {}) for p in files}
+@app.get("/image")
+def serve_image():
+    rel = request.args.get("path")
+    if not rel: abort(400, "Missing 'path'")
+    p = (IMAGES_DIR / rel).resolve()
+    try: p.relative_to(IMAGES_DIR)
+    except Exception: abort(400, "Invalid path")
+    if not p.exists(): abort(404)
+    mime, _ = mimetypes.guess_type(str(p))
+    return send_file(str(p), mimetype=mime or "application/octet-stream")
 
-    states    = sorted({ (images_meta[f].get("state") or "").strip() for f in images_meta if images_meta[f].get("state") })
-    locations = sorted({ (images_meta[f].get("location") or "").strip() for f in images_meta if images_meta[f].get("location") })
-    colors    = sorted({ (images_meta[f].get("color") or "").strip() for f in images_meta if images_meta[f].get("color") })
-    tagset = set()
-    for f in images_meta:
-        for t in (images_meta[f].get("tags") or []):
-            if isinstance(t, str) and t.strip():
-                tagset.add(t.strip())
-    tags_sorted = sorted(tagset)
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    import argparse
+    parser = argparse.ArgumentParser(description="Gallery v0.2 server (safe/full)")
+    parser.add_argument("--images", type=str, default=os.environ.get("GALLERY_IMAGES_DIR", "."), help="Path to images root")
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--debug", action="store_true")
+    return parser.parse_args(argv)
 
-    return jsonify({
-        "version": 1,
-        "files": [p.name for p in files],
-        "images": images_meta,
-        "filters": {
-            "states": states,
-            "locations": locations,
-            "colors": colors,
-            "tags": tags_sorted
-        }
-    })
+def main(argv: List[str]) -> int:
+    args = parse_args(argv)
+    root = Path(args.images)
+    if not root.exists():
+        print(f"ERROR: images dir not found: {root}", file=sys.stderr)
+        return 2
+    set_images_dir(root)
+    app.logger.setLevel("INFO")
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
+    return 0
 
 if __name__ == "__main__":
-    IMAGES_DIR.mkdir(exist_ok=True)
-    VIEWER_DIR.mkdir(exist_ok=True)
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    raise SystemExit(main(sys.argv[1:]))

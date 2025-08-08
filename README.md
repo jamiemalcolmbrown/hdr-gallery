@@ -1,12 +1,16 @@
-# HDR Image Gallery – Clean Build
+# Gallery v0.2 — Safe/Full
 
-Includes:
-- server.py (live Lightroom IPTC/XMP via exiftool, dominant color, auto-scale+cache 3840×2160)
-- viewer/ (big metadata overlay, tags as chips, filter chips UI scaffold)
-- images/ (drop your exports here)
-- cache/ (auto-created scaled images)
-
-Run:
-  sudo apt update && sudo apt install -y libimage-exiftool-perl python3-pil
-  python3 server.py
-  # open http://localhost:8000/viewer/
+## Quick start
+1) Create venv & install deps
+```
+python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+2) Ensure ExifTool is installed & on PATH.
+3) Run
+```
+python server.py --host 0.0.0.0 --port 8080           # shares on your LAN
+# or just:
+python server.py                                      # localhost only (127.0.0.1:8080)
+```
+4) Visit http://localhost:8080/

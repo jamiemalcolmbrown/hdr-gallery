@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Gallery v0.2 (Safe)</title>
+  <link rel='stylesheet' href='/static/styles.css'>
+</head>
+<body>
+  <header>
+    <h1>Gallery v0.2 — Safe</h1>
+    <div class='controls'>
+      <input id='q' placeholder='Search title/keywords/location...'>
+      <select id='orient'>
+        <option value=''>Any orientation</option>
+        <option value='landscape'>Landscape</option>
+        <option value='portrait'>Portrait</option>
+        <option value='square'>Square</option>
+      </select>
+      <button id='refresh'>Refresh</button>
+    </div>
+  </header>
+  <main>
+    <div id='grid' class='grid'></div>
+    <aside id='side' class='side hidden'>
+      <button id='close'>×</button>
+      <h2 id='meta-name'></h2>
+      <pre id='meta'></pre>
+    </aside>
+  </main>
+  <script src='/static/script.js'></script>
+</body>
+</html>
