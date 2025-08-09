@@ -1,5 +1,6 @@
-
+// v0.2.8 client with HDR badge + FS metadata overlay
 let preferAvif = false;
+let preferHdr = false; // fullscreen only
 let items = [];
 let idx = -1;
 let activeSeason = '';
@@ -14,41 +15,48 @@ async function detectAvifSupport() {
   });
 }
 
-function makeChip(text, onClick, isActive = false) {
+function detectHdrCapable() {
+  return window.matchMedia && window.matchMedia('(dynamic-range: high)').matches;
+}
+
+function qs(id) { return document.getElementById(id); }
+function makeChip(text, { onClick, active=false, classes=[] } = {}) {
   const btn = document.createElement('button');
-  btn.className = 'chip' + (isActive ? ' active' : '');
+  btn.className = 'chip' + (active ? ' active' : '') + (classes.length ? ' ' + classes.join(' ') : '');
   btn.textContent = text;
-  btn.onclick = () => onClick(text, btn);
+  btn.onclick = () => onClick && onClick(text, btn);
   return btn;
 }
 
 async function fetchFacets() {
   const res = await fetch('/api/facets');
   const data = await res.json();
-  const srow = document.getElementById('seasonRow');
-  const strow = document.getElementById('stateRow');
-  srow.innerHTML = ''; strow.innerHTML = '';
+  const scol = qs('seasonCol');
+  const stcol = qs('stateCol');
+  scol.innerHTML = ''; stcol.innerHTML = '';
 
-  // Seasons chips
-  const allS = makeChip('All seasons', (t, el) => { activeSeason = ''; refreshChips(srow, el); fetchImages(); }, activeSeason === '');
-  srow.appendChild(allS);
-  for (const s of data.seasons) {
-    const label = s[0].toUpperCase() + s.slice(1);
-    const chip = makeChip(label, (t, el) => { activeSeason = s; refreshChips(srow, el); fetchImages(); }, activeSeason === s);
-    srow.appendChild(chip);
+  // Seasons
+  const seasonMap = [['spring','season-spring'], ['summer','season-summer'], ['autumn','season-autumn'], ['winter','season-winter']];
+  const allS = makeChip('All seasons', { onClick: (t, el) => { activeSeason=''; refreshCol(scol, el); fetchImages(); }, active: activeSeason==='' });
+  scol.appendChild(allS);
+  for (const [s, cls] of seasonMap) {
+    if (!data.seasons.includes(s)) continue;
+    const label = s[0].toUpperCase()+s.slice(1);
+    const chip = makeChip(label, { onClick: (t, el) => { activeSeason=s; refreshCol(scol, el); fetchImages(); }, active: activeSeason===s, classes:[cls] });
+    scol.appendChild(chip);
   }
 
-  // States chips (full names)
-  const allSt = makeChip('All states', (t, el) => { activeState = ''; refreshChips(strow, el); fetchImages(); }, activeState === '');
-  strow.appendChild(allSt);
+  // States
+  const allSt = makeChip('All states', { onClick: (t, el) => { activeState=''; refreshCol(stcol, el); fetchImages(); }, active: activeState==='' });
+  stcol.appendChild(allSt);
   for (const st of data.states) {
-    const chip = makeChip(st, (t, el) => { activeState = st; refreshChips(strow, el); fetchImages(); }, activeState === st);
-    strow.appendChild(chip);
+    const chip = makeChip(st, { onClick: (t, el) => { activeState=st; refreshCol(stcol, el); fetchImages(); }, active: activeState===st });
+    stcol.appendChild(chip);
   }
 }
 
-function refreshChips(row, activeEl) {
-  for (const el of row.querySelectorAll('.chip')) el.classList.remove('active');
+function refreshCol(col, activeEl) {
+  for (const el of col.querySelectorAll('.chip')) el.classList.remove('active');
   activeEl.classList.add('active');
 }
 
@@ -58,8 +66,8 @@ async function fetchImages() {
   if (activeState) url.searchParams.set('state', activeState);
   const res = await fetch(url);
   const data = await res.json();
-  items = data.items;
-  const masonry = document.getElementById('masonry');
+  items = data.items || [];
+  const masonry = qs('masonry');
   masonry.innerHTML = '';
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -74,12 +82,11 @@ async function fetchImages() {
       `/thumb?path=${encodeURIComponent(item._path)}&w=512&fmt=${fmt} 512w`,
       `/thumb?path=${encodeURIComponent(item._path)}&w=1024&fmt=${fmt} 1024w`
     ].join(', ');
-    img.sizes = '(max-width: 1400px) 50vw, 25vw';
+    img.sizes = '(max-width: 1600px) 50vw, 33vw';
     img.alt = item.Title || '';
     img.onclick = () => openFs(i);
     card.appendChild(img);
 
-    // Caption: Title + full State only; no filename fallback
     const haveTitle = !!item.Title;
     const haveState = !!item._state;
     if (haveTitle || haveState) {
@@ -95,13 +102,47 @@ async function fetchImages() {
   }
 }
 
+// ----- Fullscreen with fade and HDR + overlay -----
+function fadeTo(src) {
+  const fsImg = document.getElementById('fsImg');
+  fsImg.classList.remove('loaded');
+  void fsImg.offsetWidth; // restart transition
+  fsImg.onload = () => fsImg.classList.add('loaded');
+  fsImg.src = src;
+}
+
+function buildFsUrl(item) {
+  const fmt = (preferAvif || preferHdr) ? 'avif' : 'webp'; // HDR needs avif
+  const hdr = (preferHdr ? '&hdr=1' : '');
+  return `/display?path=${encodeURIComponent(item._path)}&max=3840&fmt=${fmt}${hdr}`;
+}
+
+function updateFsMeta(item) {
+  const titleEl = document.getElementById('fsTitle');
+  const locEl   = document.getElementById('fsLoc');
+  const descEl  = document.getElementById('fsDesc');
+  const badgeEl = document.getElementById('fsBadge');
+
+  const hdrCapable = detectHdrCapable();
+  const isHdr = !!(preferHdr && hdrCapable);
+  badgeEl.textContent = isHdr ? 'HDR' : 'SDR';
+  badgeEl.title = isHdr ? 'High Dynamic Range' : 'Standard Dynamic Range';
+
+  const whereParts = [];
+  if (item._state) whereParts.push(item._state);
+  else if (item.City) whereParts.push(item.City);
+  else if (item.Location) whereParts.push(item.Location);
+
+  titleEl.textContent = item.Title || '';
+  locEl.textContent = whereParts.join(', ');
+  descEl.textContent = item.Description || '';
+}
+
 function openFs(i) {
   idx = i;
   const fs = document.getElementById('fs');
-  const fsImg = document.getElementById('fsImg');
-  const it = items[idx];
-  const fmt = (preferAvif ? 'avif' : 'webp');
-  fsImg.src = `/display?path=${encodeURIComponent(it._path)}&max=3840&fmt=${fmt}`;
+  updateFsMeta(items[idx]);
+  fadeTo(buildFsUrl(items[idx]));
   fs.classList.remove('hidden');
   fs.setAttribute('aria-hidden', 'false');
 }
@@ -112,40 +153,48 @@ function closeFs() {
   fs.classList.add('hidden');
   fs.setAttribute('aria-hidden', 'true');
   fsImg.src = '';
+  fsImg.classList.remove('loaded');
 }
 
 function nextFs(step) {
   if (idx < 0) return;
   idx = (idx + step + items.length) % items.length;
-  const it = items[idx];
-  const fsImg = document.getElementById('fsImg');
-  const fmt = (preferAvif ? 'avif' : 'webp');
-  fsImg.src = `/display?path=${encodeURIComponent(it._path)}&max=3840&fmt=${fmt}`;
+  updateFsMeta(items[idx]);
+  fadeTo(buildFsUrl(items[idx]));
 }
 
-document.getElementById('fsClose').onclick = closeFs;
-document.getElementById('fsPrev').onclick = () => nextFs(-1);
-document.getElementById('fsNext').onclick = () => nextFs(1);
-window.addEventListener('keydown', (e) => {
-  const fs = document.getElementById('fs');
-  const open = !fs.classList.contains('hidden');
-  if (!open) return;
-  if (e.key === 'Escape') closeFs();
-  if (e.key === 'ArrowLeft') nextFs(-1);
-  if (e.key === 'ArrowRight') nextFs(1);
-});
-
-document.getElementById('refresh').onclick = () => { fetchFacets(); fetchImages(); };
-document.getElementById('wantAvif').onchange = (e) => { preferAvif = e.target.checked; fetchImages(); };
-
+// --- Boot ---
 (async () => {
-  const ok = await detectAvifSupport();
-  if (ok) {
-    document.getElementById('wantAvif').checked = true;
-    preferAvif = true;
+  const avifOK = await detectAvifSupport();
+  preferAvif = avifOK; // default to AVIF thumbs if supported
+  const hdrOK = detectHdrCapable();
+
+  const avifBox = document.getElementById('wantAvif');
+  if (avifBox) {
+    avifBox.checked = avifOK;
+    avifBox.onchange = (e) => { preferAvif = e.target.checked; fetchImages(); };
   }
+  const hdrBox = document.getElementById('wantHdr');
+  if (hdrBox) {
+    hdrBox.style.display = hdrOK ? '' : 'none';
+    hdrBox.checked = false;
+    hdrBox.onchange = (e) => { preferHdr = !!e.target.checked; };
+  }
+
   await fetchFacets();
   await fetchImages();
-  document.getElementById('fs').classList.add('hidden');
-  document.getElementById('fs').setAttribute('aria-hidden', 'true');
+
+  document.getElementById('fsClose')?.addEventListener('click', closeFs);
+  document.getElementById('fsPrev')?.addEventListener('click', () => nextFs(-1));
+  document.getElementById('fsNext')?.addEventListener('click', () => nextFs(1));
+  window.addEventListener('keydown', (e) => {
+    const fs = document.getElementById('fs');
+    const open = !fs.classList.contains('hidden');
+    if (!open) return;
+    if (e.key === 'Escape') closeFs();
+    if (e.key === 'ArrowLeft') nextFs(-1);
+    if (e.key === 'ArrowRight') nextFs(1);
+  });
+
+  document.getElementById('refresh')?.addEventListener('click', () => { fetchFacets(); fetchImages(); });
 })();

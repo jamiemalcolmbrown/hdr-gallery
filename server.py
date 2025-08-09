@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Gallery v0.2.4 — Masonry + Full State Names
-- Masonry (no-crop) thumbnails; UI shows Title + full State only
-- State normalization outputs FULL names (e.g., MA -> Massachusetts)
-- Season & State chip filters
-- Prebuild (--prebuild, optional --prebuild-avif)
-- Dedup scan, ignore rules, MIN_LONG=1000, 4K fullscreen, WebP/AVIF, regex fix
+Gallery v0.2.8 — HDR badge + FS metadata overlay
+- Left sidebar with Season (low-sat colors) and State buttons
+- Masonry (no-crop) thumbnail grid
+- Fullscreen cross-fade transitions + HDR/SDR badge + Title/Location/Description overlay
+- Prefer AVIF toggle; HDR experimental toggle (fullscreen AVIF 10-bit when available)
+- Prebuild: --prebuild, --prebuild-avif, --prebuild-hdr
+- Dedupe scan, ignore rules, MIN_LONG=1000, 4K display
+- FIXED regex for control chars (single backslashes)
 """
 import argparse, json, mimetypes, os, re, subprocess, sys, threading, time, hashlib, fnmatch
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -169,30 +171,23 @@ KEYS_NUM = ["ImageWidth","ImageHeight","Orientation","FocalLength","FNumber","Sh
 KEYS_TIME = ["CreateDate","DateTimeOriginal"]
 
 def normalize_state_full(meta: dict) -> Optional[str]:
-    # Prefer explicit State or Province-State
     for k in ("State","Province-State"):
         raw = meta.get(k)
-        if not raw:
-            continue
+        if not raw: continue
         s = str(raw).strip()
         if len(s) == 2 and s.isalpha():
             abbr = s.upper()
-            return US_ABBR_TO_FULL.get(abbr, abbr)  # fallback to abbr if unknown
+            return US_ABBR_TO_FULL.get(abbr, abbr)
         low = s.lower()
-        # Already full name?
         if low in US_FULL_TO_ABBR:
-            # standardize capitalization
-            return US_FULL_TO_ABBR[low] and s.title() if s else s
-        # Not a US state; title-case region like "Quebec"
+            return " ".join(w.capitalize() for w in low.split())
         return s.title()
     return None
 
 def parse_season(meta: dict) -> Optional[str]:
     kw = meta.get("Keywords") or ""
-    if isinstance(kw, list):
-        kw_list = kw
-    else:
-        kw_list = [x.strip() for x in str(kw).split(",")]
+    if isinstance(kw, list): kw_list = kw
+    else: kw_list = [x.strip() for x in str(kw).split(",")]
     for k in kw_list:
         k_low = k.lower()
         if k_low.startswith("season:"):
@@ -220,14 +215,13 @@ def summarize_meta(meta: dict) -> dict:
     w = out.get("ImageWidth"); h = out.get("ImageHeight")
     if isinstance(w,(int,float)) and isinstance(h,(int,float)) and w and h:
         out["_orientation"] = "portrait" if h > w else ("landscape" if w > h else "square")
-    # add state + season
     st = normalize_state_full(out)
     if st: out["_state"] = st
     ss = parse_season(out)
     if ss: out["_season"] = ss
     return out
 
-# ---------------------- Cache keys + writers ----------------
+# ---------------------- Cache keys --------------------------
 def sha_for(src: Path, extra: str) -> str:
     st = src.stat()
     h = hashlib.sha1()
@@ -242,12 +236,14 @@ def thumb_cache_path(src: Path, w: int, fmt: str) -> Path:
     sub = digest[:2] + "/" + digest[2:]
     return CACHE_DIR_THUMBS / sub / f"thumb.{fmt}"
 
-def display_cache_path(src: Path, max_long: int, fmt: str) -> Path:
-    digest = sha_for(src, f"display:{max_long}:{fmt}")
+def display_cache_path(src: Path, max_long: int, fmt: str, hdr: bool) -> Path:
+    digest = sha_for(src, f"display:{max_long}:{fmt}:hdr={int(hdr)}")
     sub = digest[:2] + "/" + digest[2:]
     return CACHE_DIR_DISPLAY / sub / f"display.{fmt}"
 
+# ---------------------- Resizing ----------------------------
 def make_thumbnail(src_path: Path, w: int, fmt: str):
+    from PIL import Image
     dst = thumb_cache_path(src_path, w, fmt)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
@@ -260,56 +256,79 @@ def make_thumbnail(src_path: Path, w: int, fmt: str):
         new_size = (max(1, int(im.width * ratio)), max(1, int(im.height * ratio)))
         im = im.resize(new_size, Image.LANCZOS)
         if fmt == "avif" and AVIF_ENABLED:
-            im.save(dst, "AVIF", quality=int(os.environ.get("GALLERY_AVIF_QUALITY", "55")))
+            im.save(dst, "AVIF", quality=int(os.environ.get("GALLERY_AVIF_QUALITY", "82")))
             mime = "image/avif"
         else:
             im.save(dst, "WEBP", method=6, quality=int(os.environ.get("GALLERY_WEBP_QUALITY", "82")))
             mime = "image/webp"
     return dst, mime
 
-def make_display(src_path: Path, max_long: int, fmt: str):
-    dst = display_cache_path(src_path, max_long, fmt)
+def make_display(src_path: Path, max_long: int, fmt: str, hdr: bool):
+    from PIL import Image
+    dst = display_cache_path(src_path, max_long, fmt, hdr)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
         mime = "image/avif" if fmt == "avif" else "image/webp"
         return dst, mime
     with Image.open(src_path) as im:
         im = ImageOps.exif_transpose(im)
-        if im.mode not in ("RGB","RGBA"): im = im.convert("RGB")
         long_side = max(im.width, im.height)
         ratio = max_long / long_side if long_side else 1.0
         new_size = (max(1, int(im.width * ratio)), max(1, int(im.height * ratio)))
         im = im.resize(new_size, Image.LANCZOS)
+
         if fmt == "avif" and AVIF_ENABLED:
-            im.save(dst, "AVIF", quality=int(os.environ.get("GALLERY_AVIF_QUALITY", "55")))
-            mime = "image/avif"
+            opts = {"quality": int(os.environ.get("GALLERY_AVIF_QUALITY", "90"))}
+            if hdr:
+                try:
+                    opts.update({"depth": 10})
+                except Exception:
+                    pass
+            try:
+                im.save(dst, "AVIF", **opts)
+                mime = "image/avif"
+            except Exception:
+                im = im.convert("RGB")
+                im.save(dst, "AVIF", quality=int(os.environ.get("GALLERY_AVIF_QUALITY", "90")))
+                mime = "image/avif"
         else:
+            im = im.convert("RGB")
             im.save(dst, "WEBP", method=6, quality=int(os.environ.get("GALLERY_WEBP_QUALITY", "90")))
             mime = "image/webp"
     return dst, mime
 
 # ---------------------- Prebuild ----------------------------
-def prebuild_all(images: List[Path], sizes: List[int], max_long: int, build_avif: bool):
-    app.logger.info("Prebuild start: %d images, sizes=%s, display=%d, avif=%s", len(images), sizes, max_long, build_avif)
+def prebuild_all(images: List[Path], sizes: List[int], max_long: int, build_avif: bool, build_hdr: bool):
+    app.logger.info("Prebuild start: %d images, thumbs=%s, display=%d, avif=%s, hdr=%s",
+                    len(images), sizes, max_long, build_avif, build_hdr)
     def work(p: Path):
         # skip tiny
         try:
-            from PIL import Image
             with Image.open(p) as im:
                 if max(im.width, im.height) < MIN_LONG:
                     return 0
         except Exception:
             return 0
         made = 0
+        # thumbs (SDR only)
         for fmt in (["avif","webp"] if (build_avif and AVIF_ENABLED) else ["webp"]):
             for w in sizes:
                 make_thumbnail(p, w, fmt); made += 1
-            make_display(p, max_long, fmt); made += 1
+        # display (SDR + optional HDR AVIF)
+        for fmt in (["avif","webp"] if (build_avif and AVIF_ENABLED) else ["webp"]):
+            make_display(p, max_long, fmt, hdr=False); made += 1
+        if build_hdr and AVIF_ENABLED:
+            make_display(p, max_long, "avif", hdr=True); made += 1
         return made
+
     total = 0
     with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as ex:
-        for n in ex.map(work, images):
-            total += n
+        futures = [ex.submit(work, p) for p in images]
+        for f in as_completed(futures):
+            try:
+                total += f.result()
+            except Exception as e:
+                app.logger.warning("Prebuild error: %s", e)
     app.logger.info("Prebuild done. Items generated: %d", total)
 
 # ---------------------- Routes ------------------------------
@@ -329,11 +348,10 @@ def static_files(filename):
 
 @app.get("/api/ping")
 def ping():
-    return jsonify({"ok": True, "images_dir": str(IMAGES_DIR), "avif": AVIF_ENABLED, "min_long": MIN_LONG, "version": "v0.2.4"})
+    return jsonify({"ok": True, "images_dir": str(IMAGES_DIR), "avif": AVIF_ENABLED, "min_long": MIN_LONG, "version": "v0.2.8"})
 
 @app.get("/api/images")
 def api_images():
-    # Filters: season, state (full name)
     season = (request.args.get("season") or "").strip().lower()
     state = (request.args.get("state") or "").strip()
 
@@ -402,18 +420,19 @@ def display():
     rel = request.args.get("path")
     max_long = int(request.args.get("max", str(DISPLAY_MAX)))
     fmt = (request.args.get("fmt") or "webp").lower()
+    hdr = request.args.get("hdr") in ("1","true","yes")
     if not rel: abort(400, "Missing 'path'")
     src = (IMAGES_DIR / rel).resolve()
     try: src.relative_to(IMAGES_DIR)
     except Exception: abort(400, "Invalid path")
     if not src.exists(): abort(404)
-    if fmt == "avif" and not AVIF_ENABLED: fmt = "webp"
-    dst, mime = make_display(src, max_long, fmt)
+    if fmt == "avif" and not AVIF_ENABLED:
+        fmt = "webp"; hdr = False
+    dst, mime = make_display(src, max_long, fmt, hdr)
     return send_file(str(dst), mimetype=mime, conditional=True)
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
-    import argparse
-    parser = argparse.ArgumentParser(description="Gallery v0.2.4")
+    parser = argparse.ArgumentParser(description="Gallery v0.2.8")
     parser.add_argument("--images", type=str, default=os.environ.get("GALLERY_IMAGES_DIR", "."), help="Path to images root")
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
@@ -421,6 +440,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--clean-cache", action="store_true", help="Clean cached items for ignored/tiny sources before starting")
     parser.add_argument("--prebuild", action="store_true", help="Prebuild thumbs and display, then exit")
     parser.add_argument("--prebuild-avif", action="store_true", help="If AVIF available, also prebuild AVIF")
+    parser.add_argument("--prebuild-hdr", action="store_true", help="If AVIF available, also prebuild HDR AVIF for /display")
     return parser.parse_args(argv)
 
 def main(argv: List[str]) -> int:
@@ -436,7 +456,7 @@ def main(argv: List[str]) -> int:
 
     if args.prebuild:
         imgs = scan_images(IMAGES_DIR)
-        prebuild_all(imgs, THUMB_SIZES, DISPLAY_MAX, build_avif=args.prebuild_avif)
+        prebuild_all(imgs, THUMB_SIZES, DISPLAY_MAX, build_avif=args.prebuild_avif, build_hdr=args.prebuild_hdr)
         return 0
 
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)

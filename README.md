@@ -1,27 +1,23 @@
-# Gallery v0.2.4
+# Gallery v0.2.8
 
-**New in v0.2.4:**
-- **Masonry layout (no cropping):** variable-height thumbs; clean scaffold.
-- **Captions:** Only **Title** and **State (full)**, if present — otherwise no caption.
-- **States fully spelled out** (e.g., “MA” → “Massachusetts”). Facets and filters use full names.
-- **Prebuild:** `--prebuild` to warm 256/512/1024 thumbs and 4K display; add `--prebuild-avif` to include AVIF.
-
-## Install
-```
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-# Optional AVIF:
-pip install pillow-avif-plugin
-```
-
-## Prebuild (recommended)
-```
-python server.py --images /path/to/images --prebuild
-# Or:
-python server.py --images /path/to/images --prebuild --prebuild-avif
-```
+- HDR/SDR badge and Title/Location/Description overlay in fullscreen
+- Left sidebar with Season (low-saturation colors) and State buttons
+- Masonry (no-crop) grid, Title + State captions
+- Fullscreen cross-fade transitions
+- Prefer AVIF toggle; Prefer HDR (experimental) toggle (fullscreen only)
+- Prebuild options:
+  ```
+  python server.py --images /path/to/images --prebuild
+  python server.py --images /path/to/images --prebuild --prebuild-avif
+  python server.py --images /path/to/images --prebuild --prebuild-avif --prebuild-hdr
+  ```
+- Requires Pillow; AVIF/HDR needs `pillow-avif-plugin`.
 
 ## Run
 ```
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# for AVIF/HDR:
+pip install pillow-avif-plugin
 python server.py --images /path/to/images --host 0.0.0.0 --port 8080
 ```

@@ -3,26 +3,49 @@
 <head>
   <meta charset='utf-8'>
   <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>Gallery v0.2.4</title>
+  <title>Gallery v0.2.8</title>
   <link rel='stylesheet' href='/static/styles.css'>
 </head>
 <body>
   <header>
-    <h1>Gallery v0.2.4 — States & Seasons</h1>
-    <div class='controls'>
-      <div class='chip-row' id='seasonRow'></div>
-      <div class='chip-row' id='stateRow'></div>
-      <label class='switch'><input type='checkbox' id='wantAvif'><span>Prefer AVIF</span></label>
-      <button id='refresh'>Refresh</button>
-    </div>
+    <h1>Gallery v0.2.8</h1>
   </header>
-  <main><div id='masonry' class='masonry'></div></main>
+
+  <div class='layout'>
+    <aside class='sidebar'>
+      <div class='block'>
+        <h2>Season</h2>
+        <div class='chip-col' id='seasonCol'></div>
+      </div>
+      <div class='block'>
+        <h2>State</h2>
+        <div class='chip-col scroll' id='stateCol'></div>
+      </div>
+      <label class='switch'><input type='checkbox' id='wantAvif'><span>Prefer AVIF</span></label>
+      <label class='switch'><input type='checkbox' id='wantHdr' style='display:none'><span>Prefer HDR (exp.)</span></label>
+      <button id='refresh' class='refresh'>Refresh</button>
+    </aside>
+
+    <main class='content'>
+      <div id='masonry' class='masonry'></div>
+    </main>
+  </div>
 
   <div id='fs' class='fs hidden' aria-hidden='true'>
     <button id='fsClose' class='fs-close' aria-label='Close'>×</button>
     <button id='fsPrev' class='fs-arrow left' aria-label='Previous'>❮</button>
-    <img id='fsImg' alt='Full view' />
+    <img id='fsImg' alt='Full view' class='fade' />
     <button id='fsNext' class='fs-arrow right' aria-label='Next'>❯</button>
+
+    <!-- Fullscreen info overlay -->
+    <div id="fsInfo" class="fs-info">
+      <span id="fsBadge" class="badge">SDR</span>
+      <div class="fs-text">
+        <div id="fsTitle" class="fs-title"></div>
+        <div id="fsLoc" class="fs-loc"></div>
+        <div id="fsDesc" class="fs-desc"></div>
+      </div>
+    </div>
   </div>
 
   <script src='/static/script.js'></script>
