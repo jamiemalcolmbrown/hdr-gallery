@@ -3,22 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gallery v0.3.0</title>
+  <title>Gallery</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <div class="panel"><div class="panel-title">State</div><div id="stateFilters" class="chip-list"></div></div>
-      <div class="panel"><div class="panel-title">Season</div><div id="seasonFilters" class="chip-list"></div></div>
-      <div class="panel"><div class="panel-title">Color</div><div id="colorFilters" class="chip-list"></div></div>
-      <div class="panel small"><div>Mode: <span id="modeLabel">Detecting…</span></div><label class="row"><input type="checkbox" id="forceSDR" /> Force SDR</label></div>
+      <div class="panel header-row">
+        <button id="homeBtn" class="btn">Home</button>
+      </div>
+      <div class="panel">
+        <div class="panel-title">State</div>
+        <div id="stateFilters" class="chip-list"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Season</div>
+        <div id="seasonFilters" class="chip-list"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Color</div>
+        <div id="colorFilters" class="chip-list"></div>
+      </div>
     </aside>
-    <main class="main"><div class="thumbs" id="thumbGrid" aria-live="polite"></div></main>
+    <main class="main">
+      <div id="emptyState" class="empty hidden">No images match your filters.</div>
+      <div class="thumbs" id="thumbGrid" aria-live="polite"></div>
+    </main>
   </div>
 
   <div id="viewer" class="viewer hidden" role="dialog" aria-modal="true">
-    <div class="viewer-toolbar">
+    <div id="viewerTopBar" class="viewer-toolbar hidden">
       <button id="closeViewer" class="btn">Close</button>
       <button id="prevBtn" class="btn">⟨ Prev</button>
       <button id="nextBtn" class="btn">Next ⟩</button>
@@ -37,12 +51,6 @@
     </figure>
   </div>
 
-  <script>
-    window.__HDR_SUPPORT__ = {
-      dynamicRange: ("matchMedia" in window) && matchMedia('(dynamic-range: high)').matches,
-      gamutRec2020: (window.CSS && CSS.supports && CSS.supports('color-gamut: rec2020')) || false,
-    };
-  </script>
   <script src="/static/gallery.js"></script>
 </body>
 </html>

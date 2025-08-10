@@ -10,7 +10,7 @@ __pycache__/
 env/
 venv/
 
-# Image gallery cache
+# Image gallery cache & data
 cache/
 images/
 images/thumbs/

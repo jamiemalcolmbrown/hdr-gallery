@@ -47,7 +47,7 @@ def build_manifest():
     meta = load_sidecar_metadata()
     for it in manifest:
         m = meta.get(it["key"], {})
-        # No filename fallback: leave blank if missing
+        # NO filename fallback for title
         it["title"] = m.get("title") or ""
         it["description"] = m.get("description") or ""
         it["state_fullname"] = m.get("state_fullname") or ""
@@ -57,9 +57,7 @@ def build_manifest():
         thumb_name = f"{it['key']}.jpg"
         it["thumb"] = f"/thumbs/{thumb_name}" if (THUMBS_DIR / thumb_name).exists() else f"/images/{it['sdr']}"
 
-    # Sort by state then title (blank titles go last naturally)
-    manifest.sort(key=lambda x: (x.get("state_fullname",""), (x.get("title") or "~").lower()))
-    return {"ok": True, "version": "v0.3.0-overlay-fix2", "hdr": True, "items": manifest}
+    return {"ok": True, "version": "v0.3.0", "hdr": True, "items": manifest}
 
 @app.route("/")
 def index():
@@ -79,7 +77,7 @@ def thumb_file(filename):
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "version": "v0.3.0-overlay-fix2"})
+    return jsonify({"ok": True, "version": "v0.3.0"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

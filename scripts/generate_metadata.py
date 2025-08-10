@@ -30,7 +30,8 @@ def find_pairs(images_dir: Path):
         else: e["sdr"] = p
     return [v for v in items.values() if v["hdr"] and v["sdr"]]
 
-def run_exiftool_json(jpeg: Path) -> Optional[Dict[str, Any]]:
+def run_exiftool_json(jpeg: Path):
+    import subprocess, json, shutil
     if not shutil.which("exiftool"):
         return None
     try:
@@ -40,6 +41,8 @@ def run_exiftool_json(jpeg: Path) -> Optional[Dict[str, Any]]:
             "-Subject","-HierarchicalSubject",
             "-XMP-photoshop:State",
             "-DateTimeOriginal",
+            "-XMP:Title","-IPTC:ObjectName","-XMP:Headline",
+            "-XMP:Description","-EXIF:ImageDescription",
             str(jpeg)
         ])
         arr = json.loads(out.decode("utf-8", errors="ignore"))
@@ -47,29 +50,39 @@ def run_exiftool_json(jpeg: Path) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
-def gps_and_keywords_from_exiftool(jpeg: Path):
-    """Return (lat, lon, keywords, xmp_state, dto). Uses -n for numeric GPS."""
+def extract_title_desc(meta):
+    def first_text(*vals):
+        for v in vals:
+            if isinstance(v, list):
+                v = v[0] if v else None
+            if isinstance(v, (bytes, bytearray)):
+                try: v = v.decode("utf-8", "ignore")
+                except Exception: v = None
+            if v is None: continue
+            s = str(v).strip()
+            if s: return s
+        return ""
+    title = first_text(meta.get("Title"), meta.get("ObjectName"), meta.get("Headline"))
+    desc = first_text(meta.get("Description"), meta.get("ImageDescription"))
+    return title, desc
+
+def gps_keywords_state_dto_title_desc(jpeg: Path):
     j = run_exiftool_json(jpeg)
     if not j:
-        return None, None, [], None, ""
-    lat = j.get("GPSLatitude", None)
-    lon = j.get("GPSLongitude", None)
-    subs = j.get("Subject", [])
+        return None, None, [], None, "", "", ""
+    lat = j.get("GPSLatitude", None); lon = j.get("GPSLongitude", None)
+    try: lat = float(lat) if lat is not None else None
+    except Exception: lat = None
+    try: lon = float(lon) if lon is not None else None
+    except Exception: lon = None
+    subs = j.get("Subject", []); hs = j.get("HierarchicalSubject", [])
     if isinstance(subs, str): subs = [subs]
-    hs = j.get("HierarchicalSubject", [])
     if isinstance(hs, str): hs = [hs]
     keywords = list(dict.fromkeys([*(subs or []), *(hs or [])]))
-    xmp_state = j.get("State", None) or j.get("XMP:State", None)
-    dto = j.get("DateTimeOriginal", "") or ""
-    try:
-        lat = float(lat) if lat is not None else None
-    except Exception:
-        lat = None
-    try:
-        lon = float(lon) if lon is not None else None
-    except Exception:
-        lon = None
-    return lat, lon, keywords, xmp_state, dto
+    xmp_state = j.get("State") or j.get("XMP:State")
+    dto = j.get("DateTimeOriginal","") or ""
+    title, desc = extract_title_desc(j)
+    return lat, lon, keywords, xmp_state, dto, title, desc
 
 def season_from(dto: str, keywords: List[str], allow_month: bool) -> str:
     for k in keywords:
@@ -95,21 +108,20 @@ def dominant_color_bucket(jpeg_path: Path) -> str:
             im = ImageOps.exif_transpose(im).convert("RGB")
             w,h = im.size
             im = im.resize((256, max(1,int(256*h/max(1,w)))), Image.LANCZOS)
-            arr = np.asarray(im).astype(np.float32)/255.0
+            arr = __import__('numpy').asarray(im).astype('float32')/255.0
         r,g,b = arr[...,0], arr[...,1], arr[...,2]
-        mx = np.max(arr, axis=-1); mn = np.min(arr, axis=-1); chroma = mx-mn
+        mx = arr.max(axis=-1); mn = arr.min(axis=-1); chroma = mx-mn
         mask = chroma > 0.12
-        if not np.any(mask): return "Neutral"
-        hue = np.zeros_like(mx)
-        rmax, gmax = (mx==r), (mx==g)
-        bmax = (mx==b)
+        if not mask.any(): return "Neutral"
+        hue = mx*0
+        rmax, gmax, bmax = (mx==r), (mx==g), (mx==b)
         hue[rmax] = ((g-b)[rmax]/(chroma[rmax]+1e-6))%6
         hue[gmax] = ((b-r)[gmax]/(chroma[gmax]+1e-6))+2
         hue[bmax] = ((r-g)[bmax]/(chroma[bmax]+1e-6))+4
         hue = (hue*60.0)[mask]
         bins = [0,20,45,70,160,200,255,290,320,360]
         labels = ["Red","Orange","Yellow","Green","Cyan","Blue","Purple","Magenta"]
-        hist,_ = np.histogram(hue, bins=bins)
+        hist,_ = __import__('numpy').histogram(hue, bins=bins)
         return labels[int(hist.argmax())] if hist.sum()>0 else "Neutral"
     except Exception:
         return "Neutral"
@@ -168,14 +180,13 @@ def main():
         entry = meta.get(key, {}) if args.merge else {}
 
         title = entry.get("title") if args.merge else None
+        description = entry.get("description") if args.merge else None
         state_fullname = entry.get("state_fullname") if args.merge else None
         season = entry.get("season") if args.merge else None
         color = entry.get("color") if args.merge else None
         tags = entry.get("tags", []) if args.merge else []
 
-        title = title or key.split("__", 1)[-1]
-
-        lat, lon, keywords, xmp_state, dto = gps_and_keywords_from_exiftool(sdr)
+        lat, lon, keywords, xmp_state, dto, t_meta, d_meta = gps_keywords_state_dto_title_desc(sdr)
 
         if not state_fullname:
             guessed = None
@@ -190,12 +201,17 @@ def main():
         if not season:
             season = season_from(dto, keywords, allow_month=args.allow_month_fallback)
 
+        # Title/Description only if blank
+        title = (title or "").strip() or t_meta.strip()
+        description = (description or "").strip() or d_meta.strip()
+
         color = color or dominant_color_bucket(sdr)
         base_tags = [t for t in [state_fullname, season, color] if t]
         tags = list(dict.fromkeys((tags or []) + base_tags))
 
         meta[key] = {
-            "title": title,
+            "title": title or "",
+            "description": description or "",
             "state_fullname": state_fullname or "",
             "season": season or "",
             "color": color or "",
@@ -206,7 +222,8 @@ def main():
 
         if args.debug:
             gps_flag = "yes" if (lat is not None and lon is not None) else "no"
-            print(f"{key}: GPS={gps_flag} -> state='{state_fullname}', season='{season}', color='{color}'")
+            t_dbg = title if title else "(no title)"
+            print(f"{key}: GPS={gps_flag} -> state='{state_fullname}', season='{season}', color='{color}', title='{t_dbg}'")
 
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(f"Wrote {meta_path}")
