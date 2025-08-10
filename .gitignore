@@ -1,17 +1,27 @@
-# Ignore image and cache folders
-images/*
-cache/*
-
-# Ignore environment/config files
-.env
-*.env
-config.local.json
-
-# Python cache
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+.cache/
+env/
+venv/
+
+# Image gallery cache
+cache/
+images/
+images/thumbs/
+images/metadata.json
+
+# Large source images
+*.tif
+*.tiff
+*.avif
+*.hdr
 
 # OS files
 .DS_Store
 Thumbs.db
-
