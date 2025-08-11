@@ -1,7 +1,7 @@
 (async function() {
   const r = await fetch('/manifest.json', {cache:'no-store'});
   const manifest = await r.json();
-  const items = manifest.items || [];
+  const allItems = manifest.items || [];
 
   const stateFilters = document.getElementById('stateFilters');
   const seasonFilters = document.getElementById('seasonFilters');
@@ -12,8 +12,9 @@
 
   const viewer = document.getElementById('viewer');
   const topbar = document.getElementById('viewerTopBar');
+  const closeViewer = document.getElementById('closeViewer');
   const pic = document.getElementById('pic');
-  const overlayEl = document.getElementById('compareOverlay');
+  const overlay = document.getElementById('compareOverlay');
   const compareSDR = document.getElementById('compareSDR');
   const compareHDR = document.getElementById('compareHDR');
   const compareToggle = document.getElementById('compareToggle');
@@ -22,18 +23,11 @@
   const metaOverlay = document.getElementById('metaOverlay');
   const prevBtn = document.getElementById('prevBtn');
   const nextBtn = document.getElementById('nextBtn');
-  const closeViewer = document.getElementById('closeViewer');
 
+  let currentList = [];
   let index = 0;
-  const hdrCapable = true;
 
-  const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a,b)=>a.localeCompare(b));
-
-  // Single-select filters
   const active = { state: null, season: null, color: null };
-  const states = uniq(items.map(i => i.state_fullname));
-  const seasons = uniq(items.map(i => i.season));
-  const colors = uniq(items.map(i => i.color));
 
   function chip(label, type) {
     const el = document.createElement('button');
@@ -46,13 +40,31 @@
     });
     return el;
   }
+
+  const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+  const states = uniq(allItems.map(i => i.state_fullname));
+  const seasons = uniq(allItems.map(i => i.season));
+  const colors = uniq(allItems.map(i => i.color));
+
   function renderChips() {
     stateFilters.innerHTML = '';
     seasonFilters.innerHTML = '';
     colorFilters.innerHTML = '';
-    states.forEach(s => { const el=chip(s,'state'); if(active.state===s) el.classList.add('active'); stateFilters.appendChild(el); });
-    seasons.forEach(s => { const el=chip(s,'season'); if(active.season===s) el.classList.add('active'); seasonFilters.appendChild(el); });
-    colors.forEach(c => { const el=chip(c,'color'); if(active.color===c) el.classList.add('active'); colorFilters.appendChild(el); });
+    states.forEach(s => {
+      const el = chip(s, 'state');
+      if (active.state === s) el.classList.add('active');
+      stateFilters.appendChild(el);
+    });
+    seasons.forEach(s => {
+      const el = chip(s, 'season');
+      if (active.season === s) el.classList.add('active');
+      seasonFilters.appendChild(el);
+    });
+    colors.forEach(c => {
+      const el = chip(c, 'color');
+      if (active.color === c) el.classList.add('active');
+      colorFilters.appendChild(el);
+    });
   }
 
   function matches(i) {
@@ -62,26 +74,37 @@
     return sOk && seOk && cOk;
   }
 
-  function thumbHtml(it, idx) {
-    const title = it.title || ''; // no filename fallback
-    const label = title ? `<div class="label">${title}</div>` : '';
-    return `<div class="thumb" data-index="${idx}">
-      <img src="${it.thumb}" alt="${title}">
+  function titleLine(it) { return it.title || ''; }
+  function locLine(it) {
+    const city = it.city || '';
+    const st = it.state_abbr || '';
+    if (city && st) return `${city}, ${st}`;
+    if (city) return city;
+    if (st) return st;
+    return '';
+  }
+
+  function thumbHtml(it, idxInCurrent) {
+    const t = titleLine(it);
+    const l = locLine(it);
+    const label = (t || l) ? `<div class="label">${t ? `<div class='title'>${t}</div>` : ''}${l ? `<div class='loc'>${l}</div>` : ''}</div>` : '';
+    return `<div class="thumb" data-idx="${idxInCurrent}">
+      <img src="${it.thumb}" alt="${t || ''}">
       ${label}
     </div>`;
   }
 
   function renderThumbs() {
-    const list = items.filter(matches);
-    if (!list.length) {
+    currentList = allItems.filter(matches);
+    if (!currentList.length) {
       emptyState.classList.remove('hidden');
       thumbGrid.innerHTML = '';
       return;
     }
     emptyState.classList.add('hidden');
-    thumbGrid.innerHTML = list.map(it => thumbHtml(it, items.indexOf(it))).join('');
+    thumbGrid.innerHTML = currentList.map((it, idx) => thumbHtml(it, idx)).join('');
     for (const el of thumbGrid.querySelectorAll('.thumb')) {
-      el.addEventListener('click', () => openViewer(parseInt(el.getAttribute('data-index'), 10)));
+      el.addEventListener('click', () => openViewer(parseInt(el.getAttribute('data-idx'), 10)));
     }
   }
 
@@ -91,17 +114,18 @@
   function setOverlay(entry) {
     const title = entry.title || '';
     const desc = entry.description || '';
+    const city = entry.city || '';
     const state = entry.state_fullname || '';
-    const base = entry.tags || [];
-    const remove = new Set([state, entry.season || '', entry.color || '', '']);
-    const extraTags = [...new Set(base.filter(t => t && !remove.has(t)))];
-    const lines = [];
-    if (title) lines.push(`<div class="meta-title">${title}</div>`);
-    if (desc) lines.push(`<div class="meta-desc">${desc}</div>`);
-    if (state) lines.push(`<div class="meta-sub">Location: ${state}</div>`);
-    const extras = [entry.season || '', entry.color || '', ...extraTags].filter(Boolean).join(' · ');
-    if (extras) lines.push(`<div class="meta-tags">${extras}</div>`);
-    metaOverlay.innerHTML = lines.join('');
+    const season = entry.season || '';
+
+    const parts = [];
+    if (title) parts.push(`<div class="meta-title">${title}</div>`);
+    if (desc) parts.push(`<div class="meta-desc">${desc}</div>`);
+    const loc = [city, state].filter(Boolean).join(', ');
+    if (loc) parts.push(`<div class="meta-sub">${loc}</div>`);
+    if (season) parts.push(`<div class="meta-sub">${season}</div>`);
+
+    metaOverlay.innerHTML = parts.join('');
   }
 
   function setImage(entry) {
@@ -110,6 +134,7 @@
     srcHdr.setAttribute('type', 'image/avif');
     srcHdr.srcset = hdrUrl(entry);
     pic.appendChild(srcHdr);
+
     const image = document.createElement('img');
     image.id = 'img';
     image.alt = entry.title || '';
@@ -124,42 +149,38 @@
     setOverlay(entry);
   }
 
-  function openViewer(i) {
-    index = i;
-    viewer.classList.remove('hidden');
-    topbar.classList.add('hidden'); // keep hidden on open
-    setImage(items[index]);
-  }
+  function openViewer(i) { index = i; viewer.classList.remove('hidden'); topbar.classList.add('hidden'); setImage(currentList[index]); }
   function closeV() { viewer.classList.add('hidden'); }
-  function next() { index = (index + 1) % items.length; setImage(items[index]); }
-  function prev() { index = (index - 1 + items.length) % items.length; setImage(items[index]); }
+  function next() { index = (index + 1) % currentList.length; setImage(currentList[index]); }
+  function prev() { index = (index - 1 + currentList.length) % currentList.length; setImage(currentList[index]); }
   nextBtn.addEventListener('click', next);
   prevBtn.addEventListener('click', prev);
-  closeViewer.addEventListener('click', closeV);
+  document.getElementById('closeViewer').addEventListener('click', closeV);
 
-  // Keyboard: toggle topbar with T, compare with C
+  function goHomeFromFullscreen() {
+    closeV();
+    active.state = active.season = active.color = null;
+    renderChips();
+    renderThumbs();
+    topbar.classList.add('hidden');
+  }
   window.addEventListener('keydown', (e) => {
     if (!viewer.classList.contains('hidden')) {
-      const k = e.key.toLowerCase();
-      if (k === 't') {
-        topbar.classList.toggle('hidden');
-      } else if (k === 'c') {
+      if (e.key === 'Escape') { goHomeFromFullscreen(); return; }
+      if (e.key.toLowerCase() === 't') { topbar.classList.toggle('hidden'); return; }
+      if (e.key.toLowerCase() === 'c') {
         compareToggle.checked = !compareToggle.checked;
-        compareToggle.dispatchEvent(new Event('change'));
-      } else if (e.key === 'ArrowRight' || e.key === ' ') {
-        next();
-      } else if (e.key === 'ArrowLeft') {
-        prev();
-      } else if (e.key === 'Escape') {
-        closeV();
+        compareToggle.dispatchEvent(new Event('change')); return;
       }
+      if (e.key === 'ArrowRight' || e.key === ' ') { next(); return; }
+      if (e.key === 'ArrowLeft') { prev(); return; }
     }
   });
 
   compareToggle.addEventListener('change', () => {
     const on = compareToggle.checked;
-    overlayEl.classList.toggle('hidden', !on);
-    compareControl.classList.toggle('hidden', !on);
+    document.getElementById('compareOverlay').classList.toggle('hidden', !on);
+    document.getElementById('compareControl').classList.toggle('hidden', !on);
   });
   compareSlider.addEventListener('input', () => {
     const v = Number(compareSlider.value);

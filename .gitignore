@@ -4,24 +4,18 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Virtual environment
+# Virtual environments & caches
 .venv/
-.cache/
 env/
 venv/
+.cache/
 
-# Image gallery cache & data
+# App caches and generated files
 cache/
 images/
 images/thumbs/
 images/metadata.json
 
-# Large source images
-*.tif
-*.tiff
-*.avif
-*.hdr
-
-# OS files
+# OS junk
 .DS_Store
 Thumbs.db
