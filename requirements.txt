@@ -1,1 +1,3 @@
 Flask==3.0.3
+pillow-avif-plugin==1.5.2
+Pillow==10.4.0

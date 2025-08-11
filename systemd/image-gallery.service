@@ -1,16 +1,16 @@
 [Unit]
-Description=Image Gallery v0.3.0
+Description=Image Gallery v0.4
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/image-gallery
+WorkingDirectory=/home/jamie/image-gallery
 Environment=FLASK_APP=app.py
 Environment=PYTHONUNBUFFERED=1
-ExecStart=%h/image-gallery/.venv/bin/flask run --host=0.0.0.0 --port=5000
+ExecStart=/home/jamie/image-gallery/.venv/bin/flask run --host=0.0.0.0 --port=5000
 Restart=always
 RestartSec=2
-User=%i
+User=jamie
 
 [Install]
 WantedBy=multi-user.target

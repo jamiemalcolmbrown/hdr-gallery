@@ -1,0 +1,15 @@
+
+/* v0.4: force fullscreen overlay to be truly opaque and cover everything */
+.viewer {
+  background: #000 !important;   /* no transparency */
+}
+
+.viewer, .stage, .stage-container, .layer-host, .layer {
+  backface-visibility: hidden;
+}
+
+/* Ensure the viewer is above everything */
+.viewer { z-index: 9999 !important; }
+
+/* Prevent background peeking due to filters or blending */
+.main, .layout, body { filter: none !important; }

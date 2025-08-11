@@ -1,0 +1,5 @@
+app.py merge=ours
+static/js/gallery.js merge=ours
+static/css/styles.css merge=ours
+templates/index.html merge=ours
+scripts/generate_metadata.py merge=ours

@@ -48,3 +48,50 @@ a { color: #8ab4ff; text-decoration: none; }
 .meta-title { font-size: 2.2rem; line-height: 1.15; font-weight: 700; color: #fff; margin: 0 0 6px; }
 .meta-desc { font-size: 1.25rem; line-height: 1.3; color: #e6e6e6; margin: 0 0 8px; }
 .meta-sub { font-size: 1.05rem; color: #cfd3da; }
+
+
+/* v0.4.1 overlay visibility hardening */
+.meta-overlay { z-index: 5 !important; }
+.meta-overlay.hidden { display: block !important; opacity: 1 !important; }
+.viewer-toolbar.hidden ~ .stage .meta-overlay { display: block !important; }
+
+
+/* v0.4.6 fullscreen background + directional fade-slide */
+.viewer { background:#000 !important; }
+.viewer .stage, .viewer .stage-container { background:#000 !important; }
+.stage-container { position: relative; }
+
+/* Ensure imagery fits and centers */
+#pic, .swap-pic {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#pic img, .swap-pic img {
+  max-width: 100vw;
+  max-height: 100vh;
+  object-fit: contain;
+}
+
+/* Animation */
+.anim-in { opacity: 0; transform: translateX(0); }
+.anim-in.anim-go { opacity: 1; transition: opacity 1000ms ease, transform 1000ms ease; }
+
+.anim-out-left { opacity: 1; transform: translateX(0); }
+.anim-out-left.anim-go { opacity: 0; transform: translateX(-100px); transition: opacity 1000ms ease, transform 1000ms ease; }
+
+.anim-out-right { opacity: 1; transform: translateX(0); }
+.anim-out-right.anim-go { opacity: 0; transform: translateX(100px); transition: opacity 1000ms ease, transform 1000ms ease; }
+
+
+/* v0.4.8 full-viewport sizing to prevent top/bottom cropping */
+.viewer { overflow: hidden; }
+.viewer .stage { height: 100vh !important; }
+.viewer .stage-container { height: 100vh !important; min-height: 100vh; }
+.viewer-toolbar.hidden ~ .stage { height: 100vh !important; }
+.stage-container { position: relative; overflow: hidden; }
+
+#pic, .swap-pic { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+#pic img, .swap-pic img { width: auto; height: auto; max-width: 100vw; max-height: 100vh; object-fit: contain; }
