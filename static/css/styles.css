@@ -77,13 +77,13 @@ a { color: #8ab4ff; text-decoration: none; }
 
 /* Animation */
 .anim-in { opacity: 0; transform: translateX(0); }
-.anim-in.anim-go { opacity: 1; transition: opacity 1000ms ease, transform 1000ms ease; }
+.anim-in.anim-go { opacity: 1; transition: opacity 220ms ease, transform 220ms ease; }
 
 .anim-out-left { opacity: 1; transform: translateX(0); }
-.anim-out-left.anim-go { opacity: 0; transform: translateX(-100px); transition: opacity 1000ms ease, transform 1000ms ease; }
+.anim-out-left.anim-go { opacity: 0; transform: translateX(-40px); transition: opacity 220ms ease, transform 220ms ease; }
 
 .anim-out-right { opacity: 1; transform: translateX(0); }
-.anim-out-right.anim-go { opacity: 0; transform: translateX(100px); transition: opacity 1000ms ease, transform 1000ms ease; }
+.anim-out-right.anim-go { opacity: 0; transform: translateX(40px); transition: opacity 220ms ease, transform 220ms ease; }
 
 
 /* v0.4.8 full-viewport sizing to prevent top/bottom cropping */
@@ -95,3 +95,41 @@ a { color: #8ab4ff; text-decoration: none; }
 
 #pic, .swap-pic { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 #pic img, .swap-pic img { width: auto; height: auto; max-width: 100vw; max-height: 100vh; object-fit: contain; }
+
+
+/* v0.4.9 animation variables + overrides */
+:root{
+  --anim-dur: 1000ms;   /* default timing */
+  --anim-shift: 100px;  /* default distance */
+  --anim-ease: ease-in-out;
+}
+
+/* Use variables for transitions and distance; also add incoming slide helpers */
+.anim-in { opacity: 0; transform: translate3d(0,0,0); will-change: transform, opacity; }
+.anim-in.anim-go { opacity: 1; transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease); }
+.anim-in.from-left  { transform: translate3d(var(--anim-shift), 0, 0); }
+.anim-in.from-right { transform: translate3d(calc(-1 * var(--anim-shift)), 0, 0); }
+
+.anim-out-left { opacity: 1; transform: translate3d(0,0,0); will-change: transform, opacity; }
+.anim-out-left.anim-go { opacity: 0; transform: translate3d(calc(-1 * var(--anim-shift)), 0, 0); transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease); }
+
+.anim-out-right { opacity: 1; transform: translate3d(0,0,0); will-change: transform, opacity; }
+.anim-out-right.anim-go { opacity: 0; transform: translate3d(var(--anim-shift), 0, 0); transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease); }
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-in.anim-go,
+  .anim-out-left.anim-go,
+  .anim-out-right.anim-go {
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+
+/* v0.4.12 smoother swap: isolate paint, stable stacking */
+.stage-container { isolation:isolate; }
+#pic { z-index:1; }
+.swap-pic { z-index:2; }
+
+/* v0.4.13 fade-only note: incoming image does not move; only opacity transitions. */

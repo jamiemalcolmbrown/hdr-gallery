@@ -1,3 +1,6 @@
+console.log('[gallery] v0.4.14 fade-only non-async build loaded');
+console.log('[gallery] v0.4.13 fade-in-only build loaded');
+console.log('[gallery] v0.4.9 anim vars build loaded');
 console.log('[gallery] v0.4.6 directional animation build loaded');
 console.log('[gallery] v0.4.5 pic-injection build loaded');
 console.log('[gallery] v0.4.4 (path-aware build) loaded');
@@ -5,6 +8,10 @@ console.log('[gallery] v0.4.4 (path-aware build) loaded');
   const r = await fetch('/manifest.json', {cache:'no-store'});
   const manifest = await r.json();
   const allItems = manifest.items || [];
+
+  // v0.4.11: encode filenames for src/srcset (spaces in srcset break parsing)
+  function encFile(f){ if(!f) return ''; return f.split('/').map(encodeURIComponent).join('/'); }
+
 
 
   function ensureViewerScaffold() {
@@ -209,8 +216,8 @@ console.log('[gallery] v0.4.4 (path-aware build) loaded');
     }
   }
 
-  function sdrUrl(entry) { return `/images/${entry.sdr}`; }
-  function hdrUrl(entry) { return `/images/${entry.hdr}`; }
+  function sdrUrl(entry) { const k = entry && (entry.sdr || entry.key); if (!k) return ''; const f = entry.sdr ? entry.sdr : `${entry.key}_sdr.jpg`; return `/images/${encFile(f)}`; }
+  function hdrUrl(entry) { const k = entry && (entry.hdr || entry.key); if (!k) return ''; const f = entry.hdr ? entry.hdr : `${entry.key}_hdr.avif`; return `/images/${encFile(f)}`; }
 
   function setOverlay(entry) {
     const title = entry.title || '';
@@ -230,32 +237,40 @@ console.log('[gallery] v0.4.4 (path-aware build) loaded');
   }
 
   
-  function setImage(entry, dir) {
-    // Resolve stage container
+  
+async function setImage(entry, dir) {
     const stageContainer = document.querySelector('.stage-container') || document.getElementById('viewer') || document.body;
+    const oldPic = document.getElementById('pic');
 
-    // Build a fresh <picture> that will become #pic after transition
+    // Build new picture offscreen state
     const newPic = document.createElement('picture');
     newPic.className = 'swap-pic anim-in';
+    // (fade-only) no incoming offset for left
+    // (fade-only) no incoming offset for right
 
+    // Sources
     const srcHdr = document.createElement('source');
     srcHdr.setAttribute('type', 'image/avif');
-    srcHdr.srcset = hdrUrl(entry);
+    const _hdr = hdrUrl(entry);
+    if (_hdr && /\.[a-z0-9]+$/i.test(_hdr)) { srcHdr.setAttribute('sizes', '100vw'); srcHdr.srcset = `${_hdr} 1x`; }
 
     const srcSdr = document.createElement('source');
     srcSdr.setAttribute('type', 'image/jpeg');
-    srcSdr.srcset = sdrUrl(entry);
+    const _sdr = sdrUrl(entry);
+    if (_sdr && /\.[a-z0-9]+$/i.test(_sdr)) { srcSdr.setAttribute('sizes', '100vw'); srcSdr.srcset = `${_sdr} 1x`; }
 
+    if (srcHdr.srcset) newPic.appendChild(srcHdr);
+    if (srcSdr.srcset) newPic.appendChild(srcSdr);
+
+    // Img
     const image = document.createElement('img');
     image.alt = entry.title || '';
     image.loading = 'eager';
     image.decoding = 'async';
-
-    newPic.appendChild(srcHdr);
-    newPic.appendChild(srcSdr);
+    image.src = (_sdr || _hdr || '');
     newPic.appendChild(image);
 
-    // Insert before compare overlay if present, otherwise append
+    // Insert before compare overlay so overlays stay above
     const compareOverlayEl = document.getElementById('compareOverlay');
     if (stageContainer && compareOverlayEl && compareOverlayEl.parentElement === stageContainer) {
       stageContainer.insertBefore(newPic, compareOverlayEl);
@@ -263,20 +278,25 @@ console.log('[gallery] v0.4.4 (path-aware build) loaded');
       stageContainer.appendChild(newPic);
     }
 
-    // Animate transition
-    const oldPic = document.getElementById('pic');
-    if (dir === 'left' && oldPic) oldPic.classList.add('anim-out-left');
-    else if (dir === 'right' && oldPic) oldPic.classList.add('anim-out-right');
+    // Wait for the browser to decode to avoid a pop-in
+    try { if (image.decode) await image.decode(); } catch(e) {}
 
+    // Start both animations in the same frame
     requestAnimationFrame(() => {
+      // (fade-only) ensure no incoming offset classes
+      newPic.classList.remove('from-left','from-right');
       newPic.classList.add('anim-go');
-      if (oldPic) oldPic.classList.add('anim-go');
+      if (oldPic) {
+        if (dir === 'left')  oldPic.classList.add('anim-out-left');
+        if (dir === 'right') oldPic.classList.add('anim-out-right');
+        oldPic.classList.add('anim-go');
+      }
     });
 
     const finish = () => {
       if (oldPic && oldPic.parentElement) oldPic.parentElement.removeChild(oldPic);
       newPic.id = 'pic';
-      newPic.classList.remove('swap-pic','anim-in','anim-go','anim-out-left','anim-out-right');
+      newPic.classList.remove('swap-pic','anim-in','from-left','from-right','anim-go','anim-out-left','anim-out-right');
       newPic.removeEventListener('transitionend', finish);
     };
     newPic.addEventListener('transitionend', finish);
@@ -284,20 +304,20 @@ console.log('[gallery] v0.4.4 (path-aware build) loaded');
     // Update compare images if they exist
     const compareSDREl = document.getElementById('compareSDR');
     const compareHDREl = document.getElementById('compareHDR');
-    if (compareSDREl) compareSDREl.src = sdrUrl(entry);
-    if (compareHDREl) compareHDREl.src = hdrUrl(entry);
+    if (compareSDREl) { const u = _sdr || _hdr || ''; if (u) compareSDREl.src = u; }
+    if (compareHDREl) { const u = _hdr || _sdr || ''; if (u) compareHDREl.src = u; }
 
-    // Ensure meta overlay exists
+    // Overlay
     let mo = document.getElementById('metaOverlay');
     if (!mo) {
       mo = document.createElement('div'); mo.id = 'metaOverlay'; mo.className='meta-overlay';
       const stage = document.querySelector('.stage-container .stage') || document.querySelector('.stage') || stageContainer || document.body;
       stage.appendChild(mo);
     }
-
     setOverlay(entry);
     showMeta();
   }
+
 
 
   function openViewer(i) { index = i; let viewerEl = document.getElementById('viewer'); let topbarEl = document.getElementById('viewerTopBar'); if (!viewerEl || !topbarEl) { if (typeof ensureViewerScaffold === 'function') ensureViewerScaffold(); viewerEl = document.getElementById('viewer'); topbarEl = document.getElementById('viewerTopBar'); } if (!viewerEl || !topbarEl) { console.warn('[viewer] Missing viewer/topbar nodes.'); return; } viewerEl.classList.remove('hidden'); topbarEl.classList.add('hidden');
@@ -351,4 +371,14 @@ console.log('[gallery] v0.4.4 (path-aware build) loaded');
   renderChips();
   renderThumbs();
   try { showMeta(); } catch(e){}
+
+  // v0.4.9 runtime animation controls
+  function __setAnimVars(opts={}){
+    const r = document.documentElement.style;
+    if (opts.dur)   r.setProperty('--anim-dur', String(opts.dur));
+    if (opts.shift) r.setProperty('--anim-shift', String(opts.shift));
+    if (opts.ease)  r.setProperty('--anim-ease', String(opts.ease));
+  }
+  window.galleryAnim = { set: __setAnimVars };
+
 })();
