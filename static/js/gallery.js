@@ -1,9 +1,5 @@
-console.log('[gallery] v0.4.14 fade-only non-async build loaded');
-console.log('[gallery] v0.4.13 fade-in-only build loaded');
-console.log('[gallery] v0.4.9 anim vars build loaded');
-console.log('[gallery] v0.4.6 directional animation build loaded');
-console.log('[gallery] v0.4.5 pic-injection build loaded');
-console.log('[gallery] v0.4.4 (path-aware build) loaded');
+console.log('[gallery] v0.5.5 directional fade restored + fast-start/prefetch');
+let __lastDir = 'right'; // v0.5.5 direction memory
 (async function() {
   const r = await fetch('/manifest.json', {cache:'no-store'});
   const manifest = await r.json();
@@ -239,6 +235,7 @@ console.log('[gallery] v0.4.4 (path-aware build) loaded');
   
   
 async function setImage(entry, dir) {
+  const d = dir || __lastDir || 'right'; // v0.5.5 resolved direction
     const stageContainer = document.querySelector('.stage-container') || document.getElementById('viewer') || document.body;
     const oldPic = document.getElementById('pic');
 
@@ -287,8 +284,8 @@ async function setImage(entry, dir) {
       newPic.classList.remove('from-left','from-right');
       newPic.classList.add('anim-go');
       if (oldPic) {
-        if (dir === 'left')  oldPic.classList.add('anim-out-left');
-        if (dir === 'right') oldPic.classList.add('anim-out-right');
+        if (d === 'left')  oldPic.classList.add('anim-out-left');
+        if (d === 'right') oldPic.classList.add('anim-out-right');
         oldPic.classList.add('anim-go');
       }
     });
@@ -323,8 +320,8 @@ async function setImage(entry, dir) {
   function openViewer(i) { index = i; let viewerEl = document.getElementById('viewer'); let topbarEl = document.getElementById('viewerTopBar'); if (!viewerEl || !topbarEl) { if (typeof ensureViewerScaffold === 'function') ensureViewerScaffold(); viewerEl = document.getElementById('viewer'); topbarEl = document.getElementById('viewerTopBar'); } if (!viewerEl || !topbarEl) { console.warn('[viewer] Missing viewer/topbar nodes.'); return; } viewerEl.classList.remove('hidden'); topbarEl.classList.add('hidden');
       showMeta(); setImage(currentList[index]); }
   function closeV() { viewer.classList.add('hidden'); }
-  function next() { index = (index + 1) % currentList.length; setImage(currentList[index], 'right'); }
-  function prev() { index = (index - 1 + currentList.length) % currentList.length; setImage(currentList[index], 'left'); }
+  function next() { __lastDir = 'right'; index = (index + 1) % currentList.length; setImage(currentList[index], 'right'); }
+  function prev() { __lastDir = 'left'; index = (index - 1 + currentList.length) % currentList.length; setImage(currentList[index], 'left'); }
   nextBtn.addEventListener('click', next);
   prevBtn.addEventListener('click', prev);
   document.getElementById('closeViewer').addEventListener('click', closeV);
@@ -347,7 +344,7 @@ async function setImage(entry, dir) {
         compareToggle.dispatchEvent(new Event('change')); return;
       }
       if (e.key === 'ArrowRight' || e.key === ' ') { next(); return; }
-      if (e.key === 'ArrowLeft') { prev(); return; }
+      if (e.key === 'ArrowLeft') { __lastDir = 'left'; prev(); return; }
     }
   });
 

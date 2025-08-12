@@ -1,4 +1,4 @@
-# v0.4 Flask server (canonical name: app.py)
+# v0.5.1 Flask server (canonical name: app.py)
 from pathlib import Path
 from flask import Flask, render_template, jsonify, send_from_directory
 import json
