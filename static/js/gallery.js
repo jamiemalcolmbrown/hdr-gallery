@@ -1,9 +1,20 @@
-console.log('[gallery] v0.5.5 directional fade restored + fast-start/prefetch');
+console.log('[gallery] v0.5.6 (gated incoming ~85% + decode)');
+let __inDelayFrac = 0.85; // v0.5.6: fraction of OUT duration before IN starts
 let __lastDir = 'right'; // v0.5.5 direction memory
 (async function() {
   const r = await fetch('/manifest.json', {cache:'no-store'});
   const manifest = await r.json();
   const allItems = manifest.items || [];
+
+// v0.5.6 helper: get animation duration from CSS var (ms)
+function __animDurMs() {
+  const v = String(getComputedStyle(document.documentElement).getPropertyValue('--anim-dur') || '').trim();
+  if (v.endsWith('ms')) return parseFloat(v) || 0;
+  if (v.endsWith('s'))  return (parseFloat(v) || 0) * 1000;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : 1000; // default 1s
+}
+
 
   // v0.4.11: encode filenames for src/srcset (spaces in srcset break parsing)
   function encFile(f){ if(!f) return ''; return f.split('/').map(encodeURIComponent).join('/'); }
@@ -274,21 +285,44 @@ async function setImage(entry, dir) {
     } else if (stageContainer) {
       stageContainer.appendChild(newPic);
     }
+    // v0.5.6 Gated start: OUT immediately; IN after ~85% of OUT and once decoded
+    const __dur = (typeof __animDurMs === 'function' ? __animDurMs() : 1000);
+    const __threshold = Math.max(0, Math.round(__dur * (__inDelayFrac || 0.85)));
+    let __startedIn = false;
+    let __decodeReady = false;
+    let __timeReady = false;
 
-    // Wait for the browser to decode to avoid a pop-in
-    try { if (image.decode) await image.decode(); } catch(e) {}
+    const __maybeStartIn = () => {
+      if (__startedIn) return;
+      if (!__decodeReady || !__timeReady) return;
+      __startedIn = true;
+      requestAnimationFrame(() => { newPic.classList.add('anim-go'); });
+    };
 
-    // Start both animations in the same frame
+    // OUT: start immediately with direction
     requestAnimationFrame(() => {
-      // (fade-only) ensure no incoming offset classes
+      // ensure no incoming offset classes
       newPic.classList.remove('from-left','from-right');
-      newPic.classList.add('anim-go');
-      if (oldPic) {
-        if (d === 'left')  oldPic.classList.add('anim-out-left');
-        if (d === 'right') oldPic.classList.add('anim-out-right');
-        oldPic.classList.add('anim-go');
+      const oldPicLive = document.getElementById('pic');
+      if (oldPicLive) {
+        if (d === 'left')  oldPicLive.classList.add('anim-out-left');
+        if (d === 'right') oldPicLive.classList.add('anim-out-right');
+        oldPicLive.classList.add('anim-go');
       }
     });
+
+    // Time gate (~85% of outgoing duration by default)
+    setTimeout(() => { __timeReady = true; __maybeStartIn(); }, __threshold);
+
+    // Decode gate
+    const startDecodeReady = () => { __decodeReady = true; __maybeStartIn(); };
+    try {
+      if (image.decode) image.decode().then(startDecodeReady).catch(startDecodeReady);
+      else image.onload = startDecodeReady;
+    } catch(e) { startDecodeReady(); }
+
+    // Absolute fallback: don't hang forever
+    setTimeout(() => { if (!__startedIn) { __decodeReady = __timeReady = true; __maybeStartIn(); } }, __dur + 300);
 
     const finish = () => {
       if (oldPic && oldPic.parentElement) oldPic.parentElement.removeChild(oldPic);
@@ -376,6 +410,6 @@ async function setImage(entry, dir) {
     if (opts.shift) r.setProperty('--anim-shift', String(opts.shift));
     if (opts.ease)  r.setProperty('--anim-ease', String(opts.ease));
   }
-  window.galleryAnim = { set: __setAnimVars };
+  window.galleryAnim = Object.assign(window.galleryAnim || {}, { set: __setAnimVars, setOverlap: (f)=>{ try{ f=Number(f); if(isFinite(f)) __inDelayFrac = Math.max(0, Math.min(1, f)); }catch(e){} } });
 
 })();
