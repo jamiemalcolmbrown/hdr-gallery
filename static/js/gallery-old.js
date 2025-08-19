@@ -143,86 +143,44 @@ function __animDurMs() {
 
   const active = { state: null, season: null, color: null };
 
-  
-// ===== availability helper (added 2025-08-13 19:47:51) =====
-function computeAvailability() {
-  const avail = { states: new Set(), seasons: new Set(), colors: new Set() };
-  for (const it of allItems) {
-    if ((active.season ? it.season === active.season : true) &&
-        (active.color  ? it.color  === active.color  : true)) {
-      if (it.state_fullname) avail.states.add(it.state_fullname);
-    }
-    if ((active.state  ? it.state_fullname === active.state : true) &&
-        (active.color  ? it.color          === active.color : true)) {
-      if (it.season) avail.seasons.add(it.season);
-    }
-    if ((active.state  ? it.state_fullname === active.state : true) &&
-        (active.season ? it.season         === active.season: true)) {
-      if (it.color) avail.colors.add(it.color);
-    }
-  }
-  return avail;
-}
-// ===== end availability helper =====
-
-  // chip element factory with disabled support (added 2025-08-13 19:47:51)
-  function chip(label, type, disabled) {
+  function chip(label, type) {
     const el = document.createElement('button');
     el.className = 'chip';
     el.textContent = label || 'Unknown';
-    if (disabled) {
-      el.classList.add('disabled');
-      el.setAttribute('aria-disabled', 'true');
-    }
-    el.addEventListener('click', function(e) {
-      if (el.classList.contains('disabled')) {
-        e.preventDefault(); e.stopPropagation();
-        el.classList.add('chip-wiggle');
-        setTimeout(function(){ el.classList.remove('chip-wiggle'); }, 250);
-        return;
-      }
+    el.addEventListener('click', () => {
       active[type] = (active[type] === label) ? null : label;
       renderChips();
       renderThumbs();
-      try { showMeta(); } catch(e){}
+  try { showMeta(); } catch(e){}
     });
     return el;
   }
-
 
   const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a,b)=>a.localeCompare(b));
   const states = uniq(allItems.map(i => i.state_fullname));
   const seasons = uniq(allItems.map(i => i.season));
   const colors = uniq(allItems.map(i => i.color));
 
-  // render chips with availability-based disabling (added 2025-08-13 19:47:51)
   function renderChips() {
     stateFilters.innerHTML = '';
     seasonFilters.innerHTML = '';
-    colorFilters.innerHTML  = '';
-
-    const avail = computeAvailability();
-
-    states.forEach(function(s) {
-      const disabled = !avail.states.has(s);
-      const el = chip(s, 'state', disabled);
+    colorFilters.innerHTML = '';
+    states.forEach(s => {
+      const el = chip(s, 'state');
       if (active.state === s) el.classList.add('active');
       stateFilters.appendChild(el);
     });
-    seasons.forEach(function(s) {
-      const disabled = !avail.seasons.has(s);
-      const el = chip(s, 'season', disabled);
+    seasons.forEach(s => {
+      const el = chip(s, 'season');
       if (active.season === s) el.classList.add('active');
       seasonFilters.appendChild(el);
     });
-    colors.forEach(function(c) {
-      const disabled = !avail.colors.has(c);
-      const el = chip(c, 'color', disabled);
+    colors.forEach(c => {
+      const el = chip(c, 'color');
       if (active.color === c) el.classList.add('active');
       colorFilters.appendChild(el);
     });
   }
-
 
   function matches(i) {
     const sOk = active.state ? active.state === i.state_fullname : true;

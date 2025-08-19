@@ -133,3 +133,46 @@ a { color: #8ab4ff; text-decoration: none; }
 .swap-pic { z-index:2; }
 
 /* v0.4.13 fade-only note: incoming image does not move; only opacity transitions. */
+
+/* ===== Filter availability visuals (added 2025-08-13 19:43:05) ===== */
+.chip {
+  transition: opacity 160ms ease, transform 150ms ease, filter 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.chip.disabled {
+  opacity: 0.35;
+  filter: grayscale(1);
+  cursor: not-allowed;
+  border-color: #222 !important;
+}
+@keyframes chip-wiggle {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  50% { transform: translateX(2px); }
+  75% { transform: translateX(-1px); }
+  100% { transform: translateX(0); }
+}
+.chip.chip-wiggle { animation: chip-wiggle 180ms ease-in-out; }
+@keyframes chip-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.25); }
+  100% { box-shadow: 0 0 0 10px rgba(255,255,255,0); }
+}
+.chip:not(.disabled) { animation: chip-pulse 280ms ease-out; }
+
+/* ===== Filter availability visuals (added 2025-08-13 19:48:09) ===== */
+.chip {
+  transition: opacity 160ms ease, transform 150ms ease, filter 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.chip.disabled {
+  opacity: 0.35;
+  filter: grayscale(1);
+  cursor: not-allowed;
+  border-color: #222 !important;
+}
+@keyframes chip-wiggle {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  50% { transform: translateX(2px); }
+  75% { transform: translateX(-1px); }
+  100% { transform: translateX(0); }
+}
+.chip.chip-wiggle { animation: chip-wiggle 180ms ease-in-out; }
