@@ -1,9 +1,17 @@
-html, body { height: 100%; margin: 0; background: #000; color: #ddd; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+/* Base */
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  color: #ddd;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
 a { color: #8ab4ff; text-decoration: none; }
 .btn { background: #222; color: #eee; border: 1px solid #333; padding: 6px 10px; border-radius: 10px; cursor: pointer; }
 .row { display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; }
 .hidden { display: none !important; }
 
+/* Layout */
 .layout { display: grid; grid-template-columns: 280px 1fr; height: 100%; }
 .sidebar { background: #0e0e0f; padding: 12px; overflow: auto; border-right: 1px solid #1c1c1e; }
 .panel { background: #131316; border: 1px solid #222; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
@@ -12,28 +20,86 @@ a { color: #8ab4ff; text-decoration: none; }
 .chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { cursor: pointer; padding: 6px 10px; border-radius: 999px; border: 1px solid #2a2a2d; background: #0c0c0f; color: #ccc; font-size: 12px; }
 .chip.active { background: #1a1a22; color: #fff; border-color: #3a3a44; }
+/* No chip animations/transitions */
+.chip { transition: none; }
+.chip.disabled { opacity: 0.35; filter: grayscale(1); cursor: not-allowed; border-color: #222 !important; }
 
+/* Main / Thumbs */
 .main { overflow: auto; position: relative; }
 .empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: 1rem; color: #aaa; }
 .thumbs { column-width: 260px; column-gap: 12px; padding: 12px; }
 .thumb { display: inline-block; width: 100%; margin: 0 0 12px; background: #0a0a0b; border: 1px solid #1f1f22; border-radius: 10px; overflow: hidden; }
-.thumb img { width: 100%; height: auto; display: block; }
+.thumb img { width: 100%; height: auto; display: block; transition: none; }
 .thumb .label { padding: 8px 10px; border-top: 1px solid #1c1c1e; }
 .thumb .title { font-size: 13px; color: #e9e9e9; font-weight: 600; line-height: 1.2; }
 .thumb .loc { font-size: 12px; color: #aab; margin-top: 2px; }
 
-.viewer { position: fixed; inset: 0; background: rgba(0,0,0,0.96); display: grid; grid-template-rows: auto 1fr; z-index: 100; }
+/* Viewer shell */
+.viewer {
+  position: fixed;
+  inset: 0;
+  background: #000;         /* solid black; avoids translucent compositing cost */
+  z-index: 100;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
 .viewer.hidden { display: none; }
-.viewer-toolbar { display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid #1c1c1e; background: #0f0f12; align-items: center; }
-.stage { margin: 0; height: 100%; display: grid; grid-template-rows: 1fr; }
-.stage-container { position: relative; width: 100%; height: 100%; display: grid; place-items: center; }
-#img, #compareSDR, #compareHDR { max-width: 100vw; max-height: 100vh; object-fit: contain; display: block; }
-.compare-overlay { position: absolute; inset: 0; display: grid; place-items: center; }
+
+.viewer-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid #1c1c1e;
+  background: #0f0f12;
+  align-items: center;
+}
+
+/* Stage fills viewport; center content */
+.stage { margin: 0; height: 100vh; display: grid; grid-template-rows: 1fr; }
+.stage-container {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  isolation: isolate; /* keeps overlays predictable */
+}
+
+/* Displayed photo (no animations, full viewport fit) */
+#pic,
+#pic img {
+  width: 100%;
+  height: 100%;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain;
+  transition: none !important;
+}
+
+/* Compare overlay matches photo box */
+.compare-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: block;
+}
 .compare-overlay.hidden { display: none; }
-#compareSDR, #compareHDR { position: absolute; inset: 0; margin: auto; }
+#compareSDR,
+#compareHDR {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: none !important;
+}
 .compare-clip { clip-path: inset(0 50% 0 0); }
 
-/* Always-visible metadata overlay, ~1/3 up from bottom-left */
+/* Metadata overlay */
 .meta-overlay {
   position: absolute;
   left: 2vw;
@@ -44,135 +110,19 @@ a { color: #8ab4ff; text-decoration: none; }
   border-radius: 12px;
   border: 1px solid rgba(255,255,255,0.12);
   pointer-events: none;
+  z-index: 5 !important;            /* always over the image */
 }
 .meta-title { font-size: 2.2rem; line-height: 1.15; font-weight: 700; color: #fff; margin: 0 0 6px; }
-.meta-desc { font-size: 1.25rem; line-height: 1.3; color: #e6e6e6; margin: 0 0 8px; }
-.meta-sub { font-size: 1.05rem; color: #cfd3da; }
+.meta-desc  { font-size: 1.25rem; line-height: 1.3;  color: #e6e6e6; margin: 0 0 8px; }
+.meta-sub   { font-size: 1.05rem; color: #cfd3da; }
 
-
-/* v0.4.1 overlay visibility hardening */
-.meta-overlay { z-index: 5 !important; }
-.meta-overlay.hidden { display: block !important; opacity: 1 !important; }
+/* When toolbar is hidden, still show metadata */
 .viewer-toolbar.hidden ~ .stage .meta-overlay { display: block !important; }
 
-
-/* v0.4.6 fullscreen background + directional fade-slide */
-.viewer { background:#000 !important; }
-.viewer .stage, .viewer .stage-container { background:#000 !important; }
-.stage-container { position: relative; }
-
-/* Ensure imagery fits and centers */
-#pic, .swap-pic {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-#pic img, .swap-pic img {
-  max-width: 100vw;
-  max-height: 100vh;
-  object-fit: contain;
-}
-
-/* Animation */
-.anim-in { opacity: 0; transform: translateX(0); }
-.anim-in.anim-go { opacity: 1; transition: opacity 220ms ease, transform 220ms ease; }
-
-.anim-out-left { opacity: 1; transform: translateX(0); }
-.anim-out-left.anim-go { opacity: 0; transform: translateX(-40px); transition: opacity 220ms ease, transform 220ms ease; }
-
-.anim-out-right { opacity: 1; transform: translateX(0); }
-.anim-out-right.anim-go { opacity: 0; transform: translateX(40px); transition: opacity 220ms ease, transform 220ms ease; }
-
-
-/* v0.4.8 full-viewport sizing to prevent top/bottom cropping */
-.viewer { overflow: hidden; }
-.viewer .stage { height: 100vh !important; }
-.viewer .stage-container { height: 100vh !important; min-height: 100vh; }
-.viewer-toolbar.hidden ~ .stage { height: 100vh !important; }
-.stage-container { position: relative; overflow: hidden; }
-
-#pic, .swap-pic { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-#pic img, .swap-pic img { width: auto; height: auto; max-width: 100vw; max-height: 100vh; object-fit: contain; }
-
-
-/* v0.4.9 animation variables + overrides */
-:root{
-  --anim-dur: 1000ms;   /* default timing */
-  --anim-shift: 100px;  /* default distance */
-  --anim-ease: ease-in-out;
-}
-
-/* Use variables for transitions and distance; also add incoming slide helpers */
-.anim-in { opacity: 0; transform: translate3d(0,0,0); will-change: transform, opacity; }
-.anim-in.anim-go { opacity: 1; transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease); }
-.anim-in.from-left  { transform: translate3d(var(--anim-shift), 0, 0); }
-.anim-in.from-right { transform: translate3d(calc(-1 * var(--anim-shift)), 0, 0); }
-
-.anim-out-left { opacity: 1; transform: translate3d(0,0,0); will-change: transform, opacity; }
-.anim-out-left.anim-go { opacity: 0; transform: translate3d(calc(-1 * var(--anim-shift)), 0, 0); transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease); }
-
-.anim-out-right { opacity: 1; transform: translate3d(0,0,0); will-change: transform, opacity; }
-.anim-out-right.anim-go { opacity: 0; transform: translate3d(var(--anim-shift), 0, 0); transition: opacity var(--anim-dur) var(--anim-ease), transform var(--anim-dur) var(--anim-ease); }
-
-@media (prefers-reduced-motion: reduce) {
-  .anim-in.anim-go,
-  .anim-out-left.anim-go,
-  .anim-out-right.anim-go {
-    transition: none !important;
-    opacity: 1 !important;
-    transform: none !important;
-  }
-}
-
-
-/* v0.4.12 smoother swap: isolate paint, stable stacking */
-.stage-container { isolation:isolate; }
-#pic { z-index:1; }
-.swap-pic { z-index:2; }
-
-/* v0.4.13 fade-only note: incoming image does not move; only opacity transitions. */
-
-/* ===== Filter availability visuals (added 2025-08-13 19:43:05) ===== */
-.chip {
-  transition: opacity 160ms ease, transform 150ms ease, filter 160ms ease, background-color 160ms ease, border-color 160ms ease;
-}
-.chip.disabled {
-  opacity: 0.35;
-  filter: grayscale(1);
-  cursor: not-allowed;
-  border-color: #222 !important;
-}
-@keyframes chip-wiggle {
-  0% { transform: translateX(0); }
-  25% { transform: translateX(-2px); }
-  50% { transform: translateX(2px); }
-  75% { transform: translateX(-1px); }
-  100% { transform: translateX(0); }
-}
-.chip.chip-wiggle { animation: chip-wiggle 180ms ease-in-out; }
-@keyframes chip-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.25); }
-  100% { box-shadow: 0 0 0 10px rgba(255,255,255,0); }
-}
-.chip:not(.disabled) { animation: chip-pulse 280ms ease-out; }
-
-/* ===== Filter availability visuals (added 2025-08-13 19:48:09) ===== */
-.chip {
-  transition: opacity 160ms ease, transform 150ms ease, filter 160ms ease, background-color 160ms ease, border-color 160ms ease;
-}
-.chip.disabled {
-  opacity: 0.35;
-  filter: grayscale(1);
-  cursor: not-allowed;
-  border-color: #222 !important;
-}
-@keyframes chip-wiggle {
-  0% { transform: translateX(0); }
-  25% { transform: translateX(-2px); }
-  50% { transform: translateX(2px); }
-  75% { transform: translateX(-1px); }
-  100% { transform: translateX(0); }
-}
-.chip.chip-wiggle { animation: chip-wiggle 180ms ease-in-out; }
+/* ---- Removed legacy animation system ----
+   - .swap-pic, .anim-in, .anim-out-left/right, .anim-go
+   - animation variables (--anim-dur, --anim-shift, --anim-ease)
+   - keyframes for chip wiggle/pulse
+   - duplicate/overlapping blocks for stage/pic sizing
+   Everything above uses immediate swaps + no transitions.
+*/

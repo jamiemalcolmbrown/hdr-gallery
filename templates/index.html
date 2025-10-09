@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gallery v0.4</title>
+  <title>Gallery v0.6.1</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
 </head>
 <body>
@@ -12,7 +12,7 @@
       <div class="panel header-row">
         <button id="homeBtn" class="btn">Home</button>
       </div>
-      <div class="panel">
+      <div class="panel" style="display:none;">
         <div class="panel-title">State</div>
         <div id="stateFilters" class="chip-list"></div>
       </div>
@@ -27,7 +27,7 @@
     </aside>
 
     <main class="main">
-      <div class="mobile-topbar">
+      <div class="mobile-topbar" style="display: none;">
         <button id="menuBtn" class="btn" aria-label="Toggle filters">☰ Filters</button>
         <button id="homeBtnMobile" class="btn" aria-label="Home">Home</button>
       </div>
@@ -58,5 +58,52 @@
   </div>
 
   <script src="{{ url_for('static', filename='js/gallery.js') }}"></script>
+
+  <!-- Lightweight SSE client: listens for remote filter events from the Pi -->
+  <script>
+  (function(){
+    let es;
+    function connect(){
+      try {
+        es = new EventSource('/events');
+        es.onmessage = function(ev){
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch(e) { return; }
+          if (msg && msg.type === 'apply_filter' && msg.facet && msg.value) {
+            applyFilterUI(msg.facet, msg.value);
+          }
+        };
+        es.onerror = function(){
+          try { es.close(); } catch(e){}
+          setTimeout(connect, 2000);
+        };
+      } catch(e) {
+        setTimeout(connect, 2000);
+      }
+    }
+
+    function applyFilterUI(facet, value){
+      // 1) Preferred: call gallery helper if present
+      if (window.setFilter) {
+        try { window.setFilter(facet, value); return; } catch(e){}
+      }
+      // 2) Try clicking the chip that matches the text
+      const map = { state: 'stateFilters', season: 'seasonFilters', color: 'colorFilters' };
+      const container = document.getElementById(map[facet] || '');
+      if (container) {
+        const chips = Array.from(container.querySelectorAll('.chip'));
+        const target = chips.find(ch => ch.textContent.trim().toLowerCase() === String(value).toLowerCase());
+        if (target) { target.click(); return; }
+      }
+      // 3) Fallback: use URL param to hint the gallery code
+      const url = new URL(location.href);
+      url.searchParams.set(facet, value);
+      location.href = url.toString();
+    }
+
+    window.applyFilterUI = applyFilterUI; // exposed for debugging
+    connect();
+  })();
+  </script>
 </body>
 </html>
