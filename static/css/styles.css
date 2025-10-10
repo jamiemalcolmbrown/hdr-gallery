@@ -126,3 +126,32 @@ a { color: #8ab4ff; text-decoration: none; }
    - duplicate/overlapping blocks for stage/pic sizing
    Everything above uses immediate swaps + no transitions.
 */
+
+
+/* Skeleton + hide labels until image load */
+.thumb { position: relative; }
+
+.thumb .ph {
+  width: 100%;
+  aspect-ratio: 3 / 2;           /* prevents layout jump */
+  background: linear-gradient(90deg,#0f0f12 0%,#121216 50%,#0f0f12 100%);
+  background-size: 200% 100%;
+  animation: ph-shimmer 0.9s linear infinite;
+}
+
+@keyframes ph-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Keep label hidden until the image is loaded */
+.thumb .label { visibility: hidden; }
+.thumb.is-loaded .label { visibility: visible; }
+
+/* Avoid any image fade/transition */
+.thumb img { transition: none !important; display: block; }
+
+/* selected thumb highlight (robust) */
+.thumb.is-selected {
+border: solid 1px #eee;  border-radius: 8px;
+}

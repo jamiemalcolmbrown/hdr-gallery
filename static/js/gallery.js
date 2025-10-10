@@ -1,9 +1,8 @@
-// gallery.js  (with hardware filter sync)
-// Keeps your original structure; adds /api/filters/current poller that applies filters from the server.
-console.log('[gallery] v0.5.7 (hardware filter sync)');
+// gallery.js  v0.5.9 (hardware filter sync + joystick select + unified nav + blue-exit)
+console.log('[gallery] v0.5.9');
 
 let __inDelayFrac = 0.85; // v0.5.6: fraction of OUT duration before IN starts
-let __lastDir = 'right'; // v0.5.5 direction memory
+let __lastDir = 'right';  // v0.5.5 direction memory
 
 (async function() {
   const r = await fetch('/manifest.json', {cache:'no-store'});
@@ -129,12 +128,21 @@ let __lastDir = 'right'; // v0.5.5 direction memory
   let currentList = [];
   let index = 0;
 
- 
+  // --- active filters ---
+  const active = { state: null, season: null, color: null };
 
-  // --- existing active filters object ---
-  const active = { state: null, season: null, color: null }; // present in your file; reused here 
+  // Expose a simple filter applier so SSE can call it
+  window.applyFilter = function (facet, value) {
+    if (!facet) return false;
+    if (active[facet] === value) return true;
+    active[facet] = value ?? null;
+    renderChips();
+    renderThumbs();
+    try { showMeta(); } catch(e){}
+    return true;
+  };
 
-  // ===== availability helper (kept as-is) =====
+  // ===== availability helper =====
   function computeAvailability() {
     const avail = { states: new Set(), seasons: new Set(), colors: new Set() };
     for (const it of allItems) {
@@ -154,7 +162,7 @@ let __lastDir = 'right'; // v0.5.5 direction memory
     return avail;
   }
 
-  // chip factory (kept as-is)
+  // chip factory
   function chip(label, type, disabled) {
     const el = document.createElement('button');
     el.className = 'chip';
@@ -183,7 +191,7 @@ let __lastDir = 'right'; // v0.5.5 direction memory
   const seasons = uniq(allItems.map(i => i.season));
   const colors  = uniq(allItems.map(i => i.color));
 
-  // renderChips (kept as-is) — we’ll call this when hardware changes filters 
+  // renderChips
   function renderChips() {
     stateFilters.innerHTML = '';
     seasonFilters.innerHTML = '';
@@ -231,9 +239,12 @@ let __lastDir = 'right'; // v0.5.5 direction memory
   function thumbHtml(it, idxInCurrent) {
     const t = titleLine(it);
     const l = locLine(it);
-    const label = (t || l) ? `<div class="label">${t ? `<div class='title'>${t}</div>` : ''}${l ? `<div class='loc'>${l}</div>` : ''}</div>` : '';
+    const label = (t || l)
+      ? `<div class="label">${t ? `<div class='title'>${t}</div>` : ''}${l ? `<div class='loc'>${l}</div>` : ''}</div>`
+      : '';
     return `<div class="thumb" data-idx="${idxInCurrent}">
-      <img src="${it.thumb}" alt="${t || ''}">
+      <div class="ph" aria-hidden="true"></div>
+      <img src="${it.thumb}" alt="${t || ''}" loading="lazy" decoding="async" />
       ${label}
     </div>`;
   }
@@ -241,14 +252,34 @@ let __lastDir = 'right'; // v0.5.5 direction memory
   function renderThumbs() {
     currentList = allItems.filter(matches);
     if (!currentList.length) {
-      emptyState.classList.remove('hidden');
-      thumbGrid.innerHTML = '';
+      emptyState?.classList.remove('hidden');
+      if (thumbGrid) thumbGrid.innerHTML = '';
       return;
     }
-    emptyState.classList.add('hidden');
-    thumbGrid.innerHTML = currentList.map((it, idx) => thumbHtml(it, idx)).join('');
-    for (const el of thumbGrid.querySelectorAll('.thumb')) {
-      el.addEventListener('click', () => openViewer(parseInt(el.getAttribute('data-idx'), 10)));
+    emptyState?.classList.add('hidden');
+
+    if (thumbGrid) {
+      thumbGrid.innerHTML = currentList.map((it, idx) => thumbHtml(it, idx)).join('');
+
+      // Reveal labels only when images are fully loaded
+      thumbGrid.querySelectorAll('.thumb').forEach(th => {
+        const img = th.querySelector('img');
+        const ph  = th.querySelector('.ph');
+        const done = () => {
+          th.classList.add('is-loaded');
+          ph?.remove();
+        };
+        if (img.complete && img.naturalWidth) done();
+        else {
+          img.addEventListener('load', done, { once: true });
+          img.addEventListener('error', done, { once: true }); // don't hang on broken images
+        }
+        // click-to-open
+        th.addEventListener('click', () => openViewer(parseInt(th.getAttribute('data-idx'), 10)));
+      });
+
+      // After re-render, ensure a selection exists (cooperate with nav block)
+      document.dispatchEvent(new CustomEvent('gallery:rendered'));
     }
   }
 
@@ -274,7 +305,7 @@ let __lastDir = 'right'; // v0.5.5 direction memory
 
   function setOverlay(entry) {
     const title = entry.title || '';
-    const desc = entry.description || '';
+       const desc = entry.description || '';
     const city = entry.city || '';
     const state = entry.state_fullname || '';
     const season = entry.season || '';
@@ -287,63 +318,79 @@ let __lastDir = 'right'; // v0.5.5 direction memory
     metaOverlay.innerHTML = parts.join('');
   }
 
- async function setImage(entry) {
-  const container = document.querySelector('.stage-container') || document.getElementById('viewer') || document.body;
+  async function setImage(entry) {
+    const container = document.querySelector('.stage-container') || document.getElementById('viewer') || document.body;
 
-  // Build a fresh <picture> with SDR/HDR sources (no animation classes)
-  const picNew = document.createElement('picture');
+    // Build a fresh <picture> with SDR/HDR sources (no animation classes)
+    const picNew = document.createElement('picture');
 
-  // (HDR source is optional; during slideshow you may skip it)
-  const srcHdr = document.createElement('source');
-  srcHdr.setAttribute('type', 'image/avif');
-  const _hdr = hdrUrl(entry);
-  if (_hdr && /\.[a-z0-9]+$/i.test(_hdr)) { srcHdr.setAttribute('sizes', '100vw'); srcHdr.srcset = `${_hdr} 1x`; }
+    // (HDR source is optional; during slideshow you may skip it)
+    const srcHdr = document.createElement('source');
+    srcHdr.setAttribute('type', 'image/avif');
+    const _hdr = hdrUrl(entry);
+    if (_hdr && /\.[a-z0-9]+$/i.test(_hdr)) { srcHdr.setAttribute('sizes', '100vw'); srcHdr.srcset = `${_hdr} 1x`; }
 
-  const srcSdr = document.createElement('source');
-  srcSdr.setAttribute('type', 'image/jpeg');
-  const _sdr = sdrUrl(entry);
-  if (_sdr && /\.[a-z0-9]+$/i.test(_sdr)) { srcSdr.setAttribute('sizes', '100vw'); srcSdr.srcset = `${_sdr} 1x`; }
+    const srcSdr = document.createElement('source');
+    srcSdr.setAttribute('type', 'image/jpeg');
+    const _sdr = sdrUrl(entry);
+    if (_sdr && /\.[a-z0-9]+$/i.test(_sdr)) { srcSdr.setAttribute('sizes', '100vw'); srcSdr.srcset = `${_sdr} 1x`; }
 
-  if (srcHdr.srcset) picNew.appendChild(srcHdr);
-  if (srcSdr.srcset) picNew.appendChild(srcSdr);
+    if (srcHdr.srcset) picNew.appendChild(srcHdr);
+    if (srcSdr.srcset) picNew.appendChild(srcSdr);
 
-  const img = document.createElement('img');
-  img.alt = titleLine(entry) || '';
-  img.loading = 'eager';
-  img.decoding = 'async';
-  img.setAttribute('fetchpriority', 'high');
-  img.src = (_sdr || _hdr || '');
-  picNew.appendChild(img);
+    const img = document.createElement('img');
+    img.alt = titleLine(entry) || '';
+    img.loading = 'eager';
+    img.decoding = 'async';
+    img.setAttribute('fetchpriority', 'high');
+    img.src = (_sdr || _hdr || '');
+    picNew.appendChild(img);
 
-  // Replace existing #pic immediately (no classes, no timeouts)
-  const oldPic = document.getElementById('pic');
-  if (oldPic && oldPic.parentElement) {
-    oldPic.parentElement.replaceChild(picNew, oldPic);
-  } else {
-    container.appendChild(picNew);
+    // Replace existing #pic immediately (no classes, no timeouts)
+    const oldPic = document.getElementById('pic');
+    if (oldPic && oldPic.parentElement) {
+      oldPic.parentElement.replaceChild(picNew, oldPic);
+    } else {
+      container.appendChild(picNew);
+    }
+    picNew.id = 'pic';
+
+    // Update compare overlay sources (instant)
+    const compareSDREl = document.getElementById('compareSDR');
+    const compareHDREl = document.getElementById('compareHDR');
+    if (compareSDREl) { const u = _sdr || _hdr || ''; if (u) compareSDREl.src = u; }
+    if (compareHDREl) { const u = _hdr || _sdr || ''; if (u) compareHDREl.src = u; }
+
+    // Refill metadata overlay
+    setOverlay(entry);
+    showMeta();
+
+    // Prefetch neighbors
+    try { prefetchNeighbors(currentList, index); } catch(e) {}
   }
-  picNew.id = 'pic';
 
-  // Update compare overlay sources (instant)
-  const compareSDREl = document.getElementById('compareSDR');
-  const compareHDREl = document.getElementById('compareHDR');
-  if (compareSDREl) { const u = _sdr || _hdr || ''; if (u) compareSDREl.src = u; }
-  if (compareHDREl) { const u = _hdr || _sdr || ''; if (u) compareHDREl.src = u; }
-
-  // Refill metadata overlay
-  setOverlay(entry);
-  showMeta();
-
-  // Prefetch neighbors (still helpful, no animation needed)
-  try { prefetchNeighbors(currentList, index); } catch(e) {}
-}
-
-
-  function openViewer(i) { index = i; let viewerEl = document.getElementById('viewer'); let topbarEl = document.getElementById('viewerTopBar'); if (!viewerEl || !topbarEl) { if (typeof ensureViewerScaffold === 'function') ensureViewerScaffold(); viewerEl = document.getElementById('viewer'); topbarEl = document.getElementById('viewerTopBar'); } if (!viewerEl || !topbarEl) { console.warn('[viewer] Missing viewer/topbar nodes.'); return; } viewerEl.classList.remove('hidden'); topbarEl.classList.add('hidden');
-    showMeta(); setImage(currentList[index]); }
+  function openViewer(i) {
+    index = i;
+    let viewerEl = document.getElementById('viewer');
+    let topbarEl = document.getElementById('viewerTopBar');
+    if (!viewerEl || !topbarEl) {
+      if (typeof ensureViewerScaffold === 'function') ensureViewerScaffold();
+      viewerEl = document.getElementById('viewer'); topbarEl = document.getElementById('viewerTopBar');
+    }
+    if (!viewerEl || !topbarEl) { console.warn('[viewer] Missing viewer/topbar nodes.'); return; }
+    viewerEl.classList.remove('hidden'); topbarEl.classList.add('hidden');
+    showMeta(); setImage(currentList[index]);
+  }
   setTimeout(() => prefetchNeighbors(currentList, index), 0);
 
   function closeV() { viewer.classList.add('hidden'); }
+
+  // make a safe global so SSE can close the viewer before applying filters
+  window.closeViewerIfOpen = function () {
+    const v = document.getElementById('viewer');
+    if (v && !v.classList.contains('hidden')) v.classList.add('hidden');
+  };
+
   function next() { __lastDir = 'right'; index = (index + 1) % currentList.length; setImage(currentList[index], 'right'); }
   function prev() { __lastDir = 'left'; index = (index - 1 + currentList.length) % currentList.length; setImage(currentList[index], 'left'); }
   nextBtn.addEventListener('click', next);
@@ -359,6 +406,7 @@ let __lastDir = 'right'; // v0.5.5 direction memory
     topbar.classList.add('hidden');
     showMeta();
   }
+
   window.addEventListener('keydown', (e) => {
     if (!viewer.classList.contains('hidden')) {
       if (e.key === 'Escape') { goHomeFromFullscreen(); return; }
@@ -375,7 +423,7 @@ let __lastDir = 'right'; // v0.5.5 direction memory
   compareToggle.addEventListener('change', () => {
     const on = compareToggle.checked;
     document.getElementById('compareOverlay').classList.toggle('hidden', !on);
-    document.getElementById('compareControl').classList.toggle('hidden', !on);
+    document.getElementById('compareControl')?.classList.toggle('hidden', !on);
   });
   compareSlider.addEventListener('input', () => {
     const v = Number(compareSlider.value);
@@ -393,22 +441,30 @@ let __lastDir = 'right'; // v0.5.5 direction memory
   renderThumbs();
   try { showMeta(); } catch(e){}
 
-  // v0.4.9 runtime animation controls (kept)
+  // v0.4.9 runtime animation controls
   function __setAnimVars(opts={}){
     const r = document.documentElement.style;
     if (opts.dur)   r.setProperty('--anim-dur', String(opts.dur));
     if (opts.shift) r.setProperty('--anim-shift', String(opts.shift));
     if (opts.ease)  r.setProperty('--anim-ease', String(opts.ease));
   }
-  window.galleryAnim = Object.assign(window.galleryAnim || {}, { set: __setAnimVars, setOverlap: (f)=>{ try{ f=Number(f); if(isFinite(f)) __inDelayFrac = Math.max(0, Math.min(1, f)); }catch(e){} } });
+  window.galleryAnim = Object.assign(window.galleryAnim || {}, {
+    set: __setAnimVars,
+    setOverlap: (f)=>{ try{ f=Number(f); if(isFinite(f)) __inDelayFrac = Math.max(0, Math.min(1, f)); }catch(e){} }
+  });
 
   // =========================
-  // NEW: Hardware filter sync
+  // Hardware filter sync (poller with SSE backoff)
   // =========================
   const HW_POLL_MS = 300;
   let lastHw = { color: null, season: null, state: null };
 
   async function pollHardwareFilters() {
+    // Back off if SSE is connected (readyState 1 = OPEN)
+    if (window.__galleryES && window.__galleryES.readyState === 1) {
+      setTimeout(pollHardwareFilters, 2000);
+      return;
+    }
     try {
       const res = await fetch('/api/filters/current', { cache: 'no-store' });
       if (!res.ok) throw new Error('filters/current failed');
@@ -431,14 +487,12 @@ let __lastDir = 'right'; // v0.5.5 direction memory
   }
 
   function applyFiltersFromHardware(filters) {
+    if (typeof onUserInput === 'function') onUserInput('hardware-filter'); // stop slideshow if defined
 
-      onUserInput('hardware-filter'); // stop slideshow but keep the incoming filter
-
-    // Only apply facets that are present; today we care about color=Green
     let didChange = false;
     if (Object.prototype.hasOwnProperty.call(filters, 'color')) {
       if (active.color !== filters.color) {
-        active.color = filters.color;   // e.g., "Green"
+        active.color = filters.color;   // e.g., "Blue" / "Green"
         didChange = true;
       }
     }
@@ -451,10 +505,212 @@ let __lastDir = 'right'; // v0.5.5 direction memory
     }
   }
 
- 
-
-
   // start polling on page load
   pollHardwareFilters();
 
+  // ---------- Selection/Enter helper ----------
+  // Open the currently highlighted thumbnail (or the first one)
+  window.openSelected = function () {
+    const v = document.getElementById('viewer');
+    if (v && !v.classList.contains('hidden')) return; // ignore when already open
+    let el = document.querySelector('.thumb.is-selected') || document.querySelector('.thumb');
+    if (!el) return;
+    el.click(); // thumbs map click -> openViewer(data-idx)
+  };
+
+  // Optional: Enter key to test Select without hardware (only when viewer is closed)
+  window.addEventListener('keydown', (e) => {
+    const v = document.getElementById('viewer');
+    if (v && !v.classList.contains('hidden')) return;
+    if (e.key === 'Enter') { e.preventDefault(); window.openSelected(); }
+  });
+
+})();
+
+/* ===== SSE hookup (singleton) ===== */
+(function attachSSE() {
+  if (window.__galleryES) return;
+
+  const es = new EventSource('/events');
+  window.__galleryES = es;
+
+  es.onmessage = (evt) => {
+    if (!evt.data) return;
+    let msg; try { msg = JSON.parse(evt.data); } catch { return; }
+
+    // ---- Filters (includes Blue -> exit viewer) ----
+    if (msg.type === 'apply_filter' && msg.facet && typeof msg.value !== 'undefined') {
+      // If Blue is pressed while slideshow is open, exit to grid first
+      if (msg.facet === 'color' &&
+          String(msg.value).toLowerCase() === 'blue' &&
+          typeof closeViewerIfOpen === 'function') {
+        closeViewerIfOpen();
+      }
+
+      const applied =
+        (typeof applyFilter === 'function' && applyFilter(msg.facet, msg.value)) ||
+        (window.app && typeof window.app.applyFilter === 'function' && window.app.applyFilter(msg.facet, msg.value));
+
+      // Ensure a selected thumb after the re-render
+      document.dispatchEvent(new CustomEvent('gallery:apply_filter', { detail: msg }));
+      return;
+    }
+
+    // ---- Joystick nav ----
+    if (msg.type === 'nav' && msg.dir) {
+      const navigated =
+        (typeof navigateByJoystick === 'function' && navigateByJoystick(msg.dir)) ||
+        (window.app && typeof window.app.navigateByJoystick === 'function' && window.app.navigateByJoystick(msg.dir));
+
+      if (!navigated) {
+        document.dispatchEvent(new CustomEvent('gallery:navigate', { detail: msg }));
+      }
+      return;
+    }
+
+    // ---- Select / Enter ----
+    if (msg.type === 'select') {
+      if (typeof openSelected === 'function') openSelected();
+      else {
+        const el = document.querySelector('.thumb.is-selected') || document.querySelector('.thumb');
+        el && el.click();
+      }
+      return;
+    }
+  };
+
+  es.onerror = () => {
+    // Browser auto-reconnects; optional: log here
+  };
+})();
+
+/* ===== Unified joystick/keyboard navigation (nearest-by-direction) ===== */
+(function () {
+  const THUMB_SELECTOR = '.thumb';                                   // adjust if your class differs
+  const THUMB_CONTAINER = '#thumbGrid, .gallery, .grid, .thumbs';    // best-guess containers
+  const DIR_EPS = 2;
+  const DY_PENALTY = 1.0;  // row stickiness for left/right
+  const DX_PENALTY = 1.0;  // column stickiness for up/down
+  let observerStarted = false;
+
+  // Expose one public API used by SSE and hardware
+  window.navigateByJoystick = function (dir) {
+    // Do not navigate when viewer is open
+    const v = document.getElementById('viewer');
+    if (v && !v.classList.contains('hidden')) return false;
+    return _moveSelection(dir);
+  };
+
+  // Ensure a selection after filters apply (from SSE or UI)
+  document.addEventListener('gallery:apply_filter', () => {
+    requestAnimationFrame(() => _ensureInitialSelection(true));
+  });
+
+  // After renders (we dispatch 'gallery:rendered' in renderThumbs)
+  document.addEventListener('gallery:rendered', () => {
+    _ensureInitialSelection(true);
+  });
+
+  // Keyboard fallback (only when viewer is closed)
+  window.addEventListener('keydown', (e) => {
+    const v = document.getElementById('viewer');
+    if (v && !v.classList.contains('hidden')) return;
+    const k = e.key;
+    if (k === 'ArrowLeft')  { e.preventDefault(); navigateByJoystick('left'); }
+    if (k === 'ArrowRight') { e.preventDefault(); navigateByJoystick('right'); }
+    if (k === 'ArrowUp')    { e.preventDefault(); navigateByJoystick('up'); }
+    if (k === 'ArrowDown')  { e.preventDefault(); navigateByJoystick('down'); }
+  });
+
+  // Initial attach + DOM watcher
+  window.addEventListener('load', () => {
+    let tries = 0;
+    const tick = () => {
+      tries++;
+      _startObserverOnce();
+      const made = _ensureInitialSelection(false);
+      if (!made && tries < 20) setTimeout(tick, 150);
+    };
+    tick();
+  });
+
+  function _startObserverOnce() {
+    if (observerStarted) return;
+    const container = document.querySelector(THUMB_CONTAINER);
+    if (!container) return;
+    observerStarted = true;
+    const mo = new MutationObserver(() => {
+      requestAnimationFrame(() => _ensureInitialSelection(false));
+    });
+    mo.observe(container, { childList: true, subtree: true });
+  }
+
+  /* ---------- selection helpers ---------- */
+  function _visibleThumbs() {
+    const nodes = Array.from(document.querySelectorAll(THUMB_SELECTOR));
+    return nodes.filter(n => n.offsetParent !== null);
+  }
+
+  function _ensureInitialSelection(forceReset) {
+    const thumbs = _visibleThumbs();
+    if (!thumbs.length) return false;
+    const current = thumbs.findIndex(t => t.classList.contains('is-selected'));
+    const want = (forceReset || current === -1) ? 0 : current;
+    _selectIndex(thumbs, want, false);
+    return true;
+  }
+
+  function _currentIndex(thumbs) {
+    return thumbs.findIndex(t => t.classList.contains('is-selected'));
+  }
+
+  function _selectIndex(thumbs, idx, smooth) {
+    if (!thumbs.length) return;
+    idx = Math.max(0, Math.min(idx, thumbs.length - 1));
+    thumbs.forEach(t => t.classList.remove('is-selected'));
+    const el = thumbs[idx];
+    el.classList.add('is-selected');
+    if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: smooth ? 'smooth' : 'instant' });
+  }
+
+  function _rects(thumbs) {
+    return thumbs.map((el, i) => {
+      const r = el.getBoundingClientRect();
+      return { el, i, r, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+    });
+  }
+
+  function _moveSelection(dir) {
+    const thumbs = _visibleThumbs();
+    if (!thumbs.length) return false;
+
+    let idx = _currentIndex(thumbs);
+    if (idx === -1) { _selectIndex(thumbs, 0, false); return true; }
+
+    const rects = _rects(thumbs);
+    const me = rects[idx];
+
+    // candidates strictly in intended direction
+    let candidates;
+    if (dir === 'left')  candidates = rects.filter(t => t.cx <  me.cx - DIR_EPS);
+    if (dir === 'right') candidates = rects.filter(t => t.cx >  me.cx + DIR_EPS);
+    if (dir === 'up')    candidates = rects.filter(t => t.cy <  me.cy - DIR_EPS);
+    if (dir === 'down')  candidates = rects.filter(t => t.cy >  me.cy + DIR_EPS);
+
+    if (!candidates || !candidates.length) return false;
+
+    // cost: prefer movement along main axis, penalize drift on minor axis
+    const scored = candidates.map(t => {
+      const dx = Math.abs(t.cx - me.cx);
+      const dy = Math.abs(t.cy - me.cy);
+      const score = (dir === 'left' || dir === 'right') ? (dx + DY_PENALTY * dy) : (dy + DX_PENALTY * dx);
+      return { t, score, dx, dy };
+    });
+
+    scored.sort((a, b) => a.score - b.score || (dir === 'left' || dir === 'right' ? a.dy - b.dy : a.dx - b.dx));
+
+    _selectIndex(thumbs, scored[0].t.i, true);
+    return true;
+  }
 })();

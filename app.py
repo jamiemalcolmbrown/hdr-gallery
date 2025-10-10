@@ -152,6 +152,19 @@ def image_file(filename):
 def thumb_file(filename):
     return send_from_directory(THUMBS, filename)
 
+# Strong caching for thumbs and SDR images
+@app.after_request
+def add_cache_headers(resp):
+    path = request.path or ""
+    # Cache thumbnails for a year (immutable file names)
+    if path.startswith("/thumbs/"):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # Cache SDR/HDR originals for a week (tweak to taste)
+    elif path.startswith("/images/"):
+        resp.headers["Cache-Control"] = "public, max-age=604800"
+    # Manifest should never be cached (already no-store above, keep it)
+    return resp
+
 
 @app.route('/health')
 def health():
@@ -175,44 +188,88 @@ def api_filters_current():
     return jsonify({'ok': True, 'filters': current_filters})
 
 
-# ---------- GPIO button watcher (GPIO27→Green, GPIO17→Blue) ----------
-# Pi‑5 friendly via gpiozero + lgpio. Auto‑disables if not available.
+## ---------- GPIO button + joystick watcher (Pi-5 friendly) ----------
+# Uses gpiozero (with lgpio backend on Pi 5). Falls back to a no-op if unavailable.
 try:
     from gpiozero import Button
     _GPIOZERO = True
 except Exception:
     _GPIOZERO = False
     Button = None
-
+    print("[gpio] gpiozero not available; controls disabled.")
 
 class ButtonWatcher:
-    # Map color name → BCM pin
-    MAP = {
-        'Green': {'pin': 27},  # board pin 13
-        'Blue':  {'pin': 13},  # board pin 11
+    """
+    Watches:
+      - Blue        on GPIO12  -> apply_filter('color','Blue')
+      - Select      on GPIO18  -> broadcast 'select'
+      - TestSelect27 on GPIO27 -> broadcast 'select'   # NEW (phys pin 13)
+      - Joystick: Up/Down/Left/Right on GPIO17/22/23/24 -> broadcast nav events
+    """
+    # BCM pin map
+    PINS = {
+        "Blue": 4,
+        "Select": 18,
+        "TestSelect27": 27,   # <-- NEW Select button on BCM27 (phys 13)
+        "JoyUp":    17,
+        "JoyDown":  22,
+        "JoyLeft":  23,
+        "JoyRight": 24,
     }
-    DEBOUNCE_S = 0.08   # 80 ms
+    DEBOUNCE_S = 0.10
 
     def __init__(self):
         self.btns = {}
 
+    def _bind(self, btn, name):
+        def on_pressed():
+            if name == "Blue":
+                self._pressed_color("Blue")
+            elif name in ("Select", "TestSelect27"):
+                self._pressed_select()
+            elif name.startswith("Joy"):
+                self._pressed_joy(name)
+        def on_released():
+            print(f"[gpio] release: {name}")
+        btn.when_pressed = on_pressed
+        btn.when_released = on_released
+
     def start(self):
         if not _GPIOZERO:
-            print("[gpio] gpiozero not available; button watcher disabled.")
+            print("[gpio] gpiozero not available; watcher disabled.")
             return
-        for name, cfg in self.MAP.items():
-            pin = int(cfg['pin'])
+        # Create buttons with pull-ups (active LOW to GND)
+        for name, pin in self.PINS.items():
             btn = Button(pin, pull_up=True, bounce_time=self.DEBOUNCE_S)
-            btn.when_pressed = (lambda n=name: self._pressed(n))
+            self._bind(btn, name)
             self.btns[name] = btn
-            print(f"[gpio] gpiozero watching GPIO{pin} for {name}")
+            print(f"[gpio] watching GPIO{pin} for {name}")
 
-    def _pressed(self, color_name: str):
+    def _pressed_color(self, color_name):
         try:
+            print(f"[gpio] color: {color_name}")
             apply_filter('color', color_name)
             _broadcast({'type': 'apply_filter', 'facet': 'color', 'value': color_name})
         except Exception as e:
-            print('[gpio] handler error:', e)
+            print(f"[gpio] {color_name} handler error:", e)
+
+    def _pressed_select(self):
+        try:
+            print("[gpio] select")
+            _broadcast({'type': 'select'})
+        except Exception as e:
+            print("[gpio] select handler error:", e)
+
+    def _pressed_joy(self, name):
+        dir_map = {"JoyUp": "up", "JoyDown": "down", "JoyLeft": "left", "JoyRight": "right"}
+        direction = dir_map.get(name, "")
+        if not direction:
+            return
+        try:
+            _broadcast({'type': 'nav', 'dir': direction})
+            print(f"[gpio] nav: {direction}")
+        except Exception as e:
+            print("[gpio] joystick handler error:", e)
 
     def stop(self):
         for name, btn in list(self.btns.items()):
